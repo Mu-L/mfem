@@ -11,9 +11,10 @@
 //
 //                   MFEM Ultraweak DPG Maxwell parallel example
 //
-// Compile with: make lh-eld-dpg
+// Compile with: make lh-eld-dpg-debug
 //
-// mpirun -np 8 ./lh-eld-dpg -o 4 -paraview -eld -m data/quad.msh -ebs -sc
+// mpirun -np 8 ./lh-eld-dpg-debug -o 3 -paraview -pr 0
+// mpirun -np 8 ./lh-eld-dpg-debug -o 3 -paraview -pr 1 -sc
 
 // Electron Landau Damping
 // Strong formulation:
@@ -24,13 +25,13 @@
 //                                            J₁  = 0,  on ∂Ω
 //                                            J₂  = 0,  on ∂Ω
 // The DPG UW deals with the First Order System
-//  i ω μ₀ H  + ∇ × E                  = 0,   in Ω
-// -i ω ϵ₀ϵ E + ∇ × H - ω ϵ₀ (J₁ + J₂) = 0,   in Ω
-//         - Δ∥ J₁ + c₁ J₁ - c₁ P(r) E∥ = 0,   in Ω     
-//         - Δ∥ J₂ + c₂ J₂ + c₂ P(r) E∥ = 0,   in Ω 
-//                                 E×n = E₀,  on ∂Ω
-//                                 J₁  = 0,  on ∂Ω
-//                                 J₂  = 0,  on ∂Ω
+//  ωμ₀  H + ∇ × E                = 0,   in Ω
+//  ωϵ₀ϵ E + ∇ × H - iωϵ₀ (J₁+J₂) = 0,   in Ω
+//     -Δ∥ J₁ + c₁ J₁ - c₁ P(r) E∥ = 0,   in Ω     
+//     -Δ∥ J₂ + c₂ J₂ + c₂ P(r) E∥ = 0,   in Ω 
+//                            E×n = E₀,  on ∂Ω
+//                            J₁  = 0,  on ∂Ω
+//                            J₂  = 0,  on ∂Ω
 
 
 // in 2D
@@ -41,23 +42,23 @@
 
 // E ∈ (L²(Ω))² , H ∈ L²(Ω), J ∈ (H¹(Ω))²
 // Ê ∈ H^-1/2(Γₕ), Ĥ ∈ H^1/2(Γₕ), Ĵ₁, Ĵ₂ ∈ (H^-1/2(Γₕ))²
-//     iωμ₀ (H,δE) + (E,∇×δE) + < AÊ, δE > = 0,      ∀ δE ∈ H¹(Ω)
-//  -i ωϵ₀ϵ (E,δH) + (H,∇×δH) + < Ĥ, δH×n > - ω ϵ₀ (J₁ + J₂,δH) = 0,  ∀ δH ∈ H(curl,Ω)
+//  ωμ₀  (H,δE) + (E,∇×δE) + < AÊ, δE > = 0,                    ∀ δE ∈ H¹(Ω)
+//  ωϵ₀ϵ (E,δH) + (H,∇×δH) + < Ĥ, δH×n > - iωϵ₀(J₁+J₂,δH) = 0,  ∀ δH ∈ H(curl,Ω)
 // ( (b⋅∇)J₁,(b⋅∇) δJ₁ ) + <Ĵ₁, δJ₁> + c₁ (J₁,δJ₁) - c₁ (P(r) b⊗b E, δJ₁) = 0,  ∀ δJ₁ ∈ (H¹(Ω))²
-// ( (b⋅∇)J₂,(b⋅∇) δJ₂ ) + <Ĵ₂, δJ₂> + c₂ (J₂,δJ₂) + c₂ (P(r) b⊗b E, δJ₂) = 0,  ∀ δJ₂ ∈ (H¹(Ω))²
+// ( (b⋅∇)J₂,(b⋅∇) δJ₂ ) + <Ĵ₂, δJ₂> + c₂ (J₂,δJ₂) + c₂ (P(r) b⊗b E, δJ₂) = 0,  ∀ δJ₁ ∈ (H¹(Ω))²
 //                                                                  Ê = E₀, on ∂Ω
 //                                                            Ĵ₁ = Ĵ₂ = 0,  on ∂Ω
 // ----------------------------------------------------------------------------------------------------------------
-// |   |      E       |     H    |        J₁        |        J₂        |   Ê   |   Ĥ    |   Ĵ₁   |   Ĵ₂   |  RHS  |
+// |   |      E       |     H    |   Ê   |   Ĥ    |        J₁        |        J₂        |   Ĵ₁   |   Ĵ₂   |  RHS  |
 // ----------------------------------------------------------------------------------------------------------------
-// |δE |  (E,∇ × δE)  |iωμ₀(H,δE)|                  |                  | <Ê,δE>|        |        |        |   0   |  
-// |   |              |          |                  |                  |       |        |        |        |       |  
-// |δH | -iωϵ₀ϵ(E,δH) | (H,∇×δH) |   -ωϵ₀ (J₁,δH)   |  -ωϵ₀ (J₂,δH)    |       |<Ĥ,δH×n>|        |        |   0   |  
-// |   |              |          |                  |                  |       |        |        |        |       |  
-// |δJ₁|-c₁(P(r)E,δJ₁)|          |((b⋅∇)J₁,(b⋅∇)δJ₁)|                  |       |        |<Ĵ₁,δJ₁>|        |   0   |  
-// |   |              |          |     + c₁ (J₁,δJ₁)|                  |       |        |        |        |       |    
-// |δJ₂| c₂(P(r)E,δJ₂)|          |                  |((b⋅∇)J₂,(b⋅∇)δJ₂)|       |        |        |<Ĵ₂,δJ₂>|   0   |  
-// |   |              |          |                  |     + c₂ (J₂,δJ₂)|       |        |        |        |       |    
+// |δE |  (E,∇ × δE)  | ωμ₀(H,δE)| <Ê,δE>|        |                  |                  |        |        |   0   |  
+// |   |              |          |       |        |                  |                  |        |        |       |  
+// |δH |  ωϵ₀ϵ(E,δH)  | (H,∇×δH) |       |<Ĥ,δH×n>|  -iωϵ₀ (J₁,δH)   | -iωϵ₀ (J₂,δH)    |        |        |   0   |  
+// |   |              |          |       |        |                  |                  |        |        |       |  
+// |δJ₁|-c₁(P(r)E,δJ₁)|          |       |        |((b⋅∇)J₁,(b⋅∇)δJ₁)|                  |<Ĵ₁,δJ₁>|        |   0   |  
+// |   |              |          |       |        |     + c₁ (J₁,δJ₁)|                  |        |        |       |    
+// |δJ₂| c₂(P(r)E,δJ₂)|          |       |        |                  |((b⋅∇)J₂,(b⋅∇)δJ₂)|        |<Ĵ₂,δJ₂>|   0   |  
+// |   |              |          |       |        |                  |     + c₂ (J₂,δJ₂)|        |        |       |    
 // where (δE,δH,δJ₁,δJ₂) ∈  H¹(Ω) × H(curl,Ω) × (H¹(Ω))² × (H¹(Ω))² 
 
 
@@ -124,7 +125,7 @@ int main(int argc, char *argv[])
    Hypre::Init();
 
    const char *mesh_file = "data/LH_hot.msh";
-   int order = 1;
+   int order = 2;
    int delta_order = 1;
    int par_ref_levels = 0;
    int ser_ref_levels = 0;
@@ -137,8 +138,6 @@ int main(int argc, char *argv[])
    real_t mu = 1.257;
    real_t eps0 = 8.8541878128;
    real_t cfactor = 1e-6;
-   real_t balance_scale = 1.0;
-   bool enable_balance_scale = false;
 
    bool eld = false; // enable/disable electron Landau damping 
 
@@ -147,13 +146,12 @@ int main(int argc, char *argv[])
    bool paraview = false;
    bool debug = false;
    bool mumps_solver = false;
+   real_t norm_scale = 1.0;
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh",
                   "Mesh file to use.");
    args.AddOption(&order, "-o", "--order",
                   "Finite element order (polynomial degree)");
-   args.AddOption(&delta_order, "-do", "--delta-order",
-                  "Finite element order for the test space");                  
    args.AddOption(&ser_ref_levels, "-sr", "--serial-refinement_levels",
                   "Number of serial refinement levels.");                  
    args.AddOption(&par_ref_levels, "-pr", "--parallel-refinement_levels",
@@ -181,10 +179,7 @@ int main(int argc, char *argv[])
                   "Enable or disable GLVis visualization.");
    args.AddOption(&debug, "-debug", "--debug", "-no-debug",
                   "--no-debug",
-                  "Enable or disable debug mode (delta = 0.01 and no coupling).");         
-   args.AddOption(&enable_balance_scale, "-ebs", "--enable-balance-scale", "-no-ebs",
-                  "--no-ebs",
-                  "Enable or disable balance scale.");
+                  "Enable or disable debug mode (delta = 0.01 and no coupling).");                  
    args.Parse();
    if (!args.Good())
    {
@@ -210,11 +205,9 @@ int main(int argc, char *argv[])
       csigns(0) = -1.0;  csigns(1) = 1.0;
    }
    cvals *= cfactor; // scale the coefficients
+
    real_t omega = 2.*M_PI*rnum;
    int test_order = order+delta_order;
-
-   balance_scale = (enable_balance_scale) ? omega * eps0 * omega : 1.0;
-
 
    if (eld && !debug) 
    {
@@ -234,17 +227,7 @@ int main(int argc, char *argv[])
       mesh.UniformRefinement();
    }
 
-   // mesh.RemoveInternalBoundaries();
-
-   Array<int> int_bdr_attr;
-   for (int i = 0; i < mesh.GetNBE(); i++)
-   {
-      if (mesh.FaceIsInterior(mesh.GetBdrElementFaceIndex(i)))
-      {
-         int_bdr_attr.Append(mesh.GetBdrAttribute(i));
-      }
-   }
-
+   mesh.RemoveInternalBoundaries();
    ParMesh pmesh(MPI_COMM_WORLD, mesh);
    mesh.Clear();
 
@@ -267,7 +250,6 @@ int main(int argc, char *argv[])
    // -ωϵ₀
    real_t scale = (debug) ? 0.0 : 1.0;
    ConstantCoefficient negomegeps0_cf(-omega*eps0 * scale);
-   ConstantCoefficient balancescaled_negomegeps0_cf( -omega*eps0/balance_scale * scale);
    // μ₀² ω²
    ConstantCoefficient mu2omeg2_cf((mu*mu*omega*omega));
 
@@ -299,7 +281,6 @@ int main(int argc, char *argv[])
 
    VectorFunctionCoefficient b_cf(dim,bfunc);// b
    ScalarVectorProductCoefficient scaled_b_cf(sqrt(cfactor), b_cf);
-   ConstantCoefficient diff_coeff(cfactor);
 
    MatrixFunctionCoefficient bb_cf(dim,bcrossb); // b⊗b
    MatrixSumCoefficient oneminusbb(Mone_cf, bb_cf, 1.0, -1.0); // 1 - b⊗b
@@ -316,12 +297,6 @@ int main(int argc, char *argv[])
 
    coefs_r[nattr-1] = &eps_r;
    coefs_i[nattr-1] = &eps_i;
-
-   // for (int i = 0; i < nattr-1; ++i)
-   // {
-   //    coefs_r[i] = &eps_r;
-   //    coefs_i[i] = &eps_i;
-   // }
 
    PWMatrixCoefficient eps_cf_r(dim, attr, coefs_r);
    PWMatrixCoefficient eps_cf_i(dim, attr, coefs_i);
@@ -356,6 +331,10 @@ int main(int argc, char *argv[])
    // (ωϵ₀ϵ)(ωϵ₀ϵ)^*  (δH, δH)
    TransposeMatrixCoefficient eps0omeg_eps_r_t(eps0omeg_eps_r);
    TransposeMatrixCoefficient eps0omeg_eps_i_t(eps0omeg_eps_i);
+
+   MatrixProductCoefficient eps0omeg_eps_r_t_rot(eps0omeg_eps_r, rot);
+   MatrixProductCoefficient eps0omeg_eps_i_t_rot(eps0omeg_eps_i, rot);
+
    MatrixProductCoefficient MrMrt_cf(eps0omeg_eps_r, eps0omeg_eps_r_t);
    MatrixProductCoefficient MiMit_cf(eps0omeg_eps_i, eps0omeg_eps_i_t);
    MatrixProductCoefficient MiMrt_cf(eps0omeg_eps_i, eps0omeg_eps_r_t);
@@ -372,24 +351,21 @@ int main(int argc, char *argv[])
    Array<MatrixCoefficient *> cPibb_cf(ndiffusionequations);
    Array<MatrixCoefficient *> signedcPrbb_cf(ndiffusionequations);
    Array<MatrixCoefficient *> signedcPibb_cf(ndiffusionequations);
-
-   Array<MatrixCoefficient *> balancescaled_signedcPrbb_cf(ndiffusionequations);
-   Array<MatrixCoefficient *> balancescaled_signedcPibb_cf(ndiffusionequations);
    Vector temp(nattr); temp=0.0;
    Array<ConstantCoefficient *> c_coeffs(ndiffusionequations);
    for (int i = 0; i<ndiffusionequations; i++)
    {
       temp[nattr-1] = cvals(i);
-      // temp = cvals(i);
       pw_c_coeffs[i] = new PWConstCoefficient(temp);
       c_coeffs[i] = new ConstantCoefficient(cvals(i));
       cPrbb_cf[i] = new ScalarMatrixProductCoefficient(*pw_c_coeffs[i], P_cf_bb_r);
       cPibb_cf[i] = new ScalarMatrixProductCoefficient(*pw_c_coeffs[i], P_cf_bb_i);
       signedcPrbb_cf[i] = new ScalarMatrixProductCoefficient(csigns[i], *cPrbb_cf[i]);
       signedcPibb_cf[i] = new ScalarMatrixProductCoefficient(csigns[i], *cPibb_cf[i]);
-      balancescaled_signedcPrbb_cf[i] = new ScalarMatrixProductCoefficient(balance_scale,*signedcPrbb_cf[i]);
-      balancescaled_signedcPibb_cf[i] = new ScalarMatrixProductCoefficient(balance_scale,*signedcPibb_cf[i]);
-   }
+   }   
+
+   ConstantCoefficient norm_scale_cf(norm_scale);
+
 
    // Define the spaces
    Array<FiniteElementCollection *> trial_fecols;
@@ -403,21 +379,23 @@ int main(int argc, char *argv[])
    trial_fecols.Append(new L2_FECollection(order-1, dim));
    pfes.Append(new ParFiniteElementSpace(&pmesh, trial_fecols.Last()));
 
-   // Vector H1 spaces for Jᵢ 
+   // Trial trace space for Ê 
+   trial_fecols.Append(new RT_Trace_FECollection(order-1, dim));
+   pfes.Append(new ParFiniteElementSpace(&pmesh, trial_fecols.Last()));
+
+   // Trial trace space for Ĥ 
+   trial_fecols.Append(new H1_Trace_FECollection(order, dim));
+   pfes.Append(new ParFiniteElementSpace(&pmesh, trial_fecols.Last()));
+
+
+   // Vector H1 space for Js
    for (int i = 0; i < ndiffusionequations; i++)
    {
       trial_fecols.Append(new H1_FECollection(order, dim));
       pfes.Append(new ParFiniteElementSpace(&pmesh, trial_fecols.Last(), dim));
    }
 
-   // Trial trace space for Ê 
-   trial_fecols.Append(new RT_Trace_FECollection(order-1, dim));
-   pfes.Append(new ParFiniteElementSpace(&pmesh, trial_fecols.Last()));
-   // Trial trace space for Ĥ 
-   trial_fecols.Append(new H1_Trace_FECollection(order, dim));
-   pfes.Append(new ParFiniteElementSpace(&pmesh, trial_fecols.Last()));
-
-   // Vector Trace spaces Ĵᵢ    
+   // Vector Trace spaces for Js   
    for (int i = 0; i < ndiffusionequations; i++)
    {
       trial_fecols.Append(new RT_Trace_FECollection(order-1,dim));
@@ -457,43 +435,43 @@ int main(int argc, char *argv[])
    // (E,∇ × δE)
    a->AddTrialIntegrator(new TransposeIntegrator(new MixedCurlIntegrator(one_cf)),
                          nullptr,0, 0);
-   //  -i ω ϵ₀ (ϵE,δH) = - i ω ϵ₀(ϵᵣ + i ϵᵢ E, δH)
-   //                   =  (ω ϵ₀ ϵᵢ E, δH) + i (-ω ϵ₀ϵᵣ E, δH)
+   //  ωϵ₀(ϵE,δH) = ω ϵ₀(ϵᵣ + i ϵᵢ E, δH)
+   //             = (ω ϵ₀ ϵᵣ E, δH) + i (ω ϵ₀ϵᵢ E, δH)
    a->AddTrialIntegrator(
-      new TransposeIntegrator(new VectorFEMassIntegrator(eps0omeg_eps_i)), 
-      new TransposeIntegrator(new VectorFEMassIntegrator(negeps0omeg_eps_r)),
+      new TransposeIntegrator(new VectorFEMassIntegrator(eps0omeg_eps_r)), 
+      new TransposeIntegrator(new VectorFEMassIntegrator(eps0omeg_eps_i)),
                               0,1);
-   // iωμ₀(H,δE) 
-   a->AddTrialIntegrator(nullptr,new MixedScalarMassIntegrator(omegamu_cf),1, 0);
+   // ωμ₀(H,δE) 
+   a->AddTrialIntegrator(new MixedScalarMassIntegrator(omegamu_cf),
+                         nullptr,1, 0);
    // (H,∇ × δH)                         
    a->AddTrialIntegrator(
       new TransposeIntegrator(new MixedCurlIntegrator(one_cf)), nullptr,1, 1);
 
    // Trace integrators               
    //  <Ê,δE>
-   a->AddTrialIntegrator(new TraceIntegrator,nullptr, 2 + ndiffusionequations, 0);
+   a->AddTrialIntegrator(new TraceIntegrator,nullptr, 2, 0);
    // <Ĥ,δH × n>
-   a->AddTrialIntegrator(new TangentTraceIntegrator,nullptr, 2 + ndiffusionequations+1, 1);
+   a->AddTrialIntegrator(new TangentTraceIntegrator,nullptr, 3, 1);
    if (eld)
    {
       for (int i = 0; i < ndiffusionequations; i++)
       {
          // ±cᵢ(P(r) (b ⊗ b) E, δJᵢ)
-         a->AddTrialIntegrator(new VectorMassIntegrator(*balancescaled_signedcPrbb_cf[i]),
-                               new VectorMassIntegrator(*balancescaled_signedcPibb_cf[i]),
+         a->AddTrialIntegrator(new VectorMassIntegrator(*signedcPrbb_cf[i]),
+                               new VectorMassIntegrator(*signedcPibb_cf[i]),
                                0, i+2);
-         // -ωϵ₀ (Jᵢ ,δH)
-         a->AddTrialIntegrator(
-            new TransposeIntegrator(new VectorFEMassIntegrator(balancescaled_negomegeps0_cf)),
-            // new TransposeIntegrator(new VectorFEMassIntegrator(negomegeps0_cf)),
-                           nullptr,i+2, 1);
+         // -iωϵ₀ (Jᵢ ,δH)
+         a->AddTrialIntegrator(nullptr,
+         new TransposeIntegrator(new VectorFEMassIntegrator(negomegeps0_cf)),i+4, 1);
+         
          // ((b⋅∇)Jᵢ, (b⋅∇) δJᵢ)
          a->AddTrialIntegrator(new DirectionalDiffusionIntegrator(scaled_b_cf), nullptr,
-         // a->AddTrialIntegrator(new VectorDiffusionIntegrator(diff_coeff), nullptr,
-                               i+2, i+2);
+         // a->AddTrialIntegrator(new DirectionalDiffusionIntegrator(b_cf), nullptr,
+                               i+4, i+2);
          // cᵢ(Jᵢ, δJᵢ)
          a->AddTrialIntegrator(new VectorMassIntegrator(*pw_c_coeffs[i]), nullptr,
-                               i+2, i+2);
+                               i+4, i+2);
 
          // <Ĵᵢ,δJᵢ>
          a->AddTrialIntegrator(new VectorTraceIntegrator,nullptr,
@@ -501,28 +479,30 @@ int main(int argc, char *argv[])
       }
    }      
 
+
    // test integrators
    // (∇δE,∇δE)
    a->AddTestIntegrator(new DiffusionIntegrator(one_cf),nullptr, 0, 0);
    // (δE,δE)
-   a->AddTestIntegrator(new MassIntegrator(one_cf),nullptr, 0, 0);
+   a->AddTestIntegrator(new MassIntegrator(norm_scale_cf),nullptr, 0, 0);
    // μ₀² ω² (δE,δE)
    a->AddTestIntegrator(new MassIntegrator(mu2omeg2_cf),nullptr,0, 0);
-   // -i ω μ₀ (δE,∇ × δH) = i (δE, -ω μ₀ ∇ × δ H)
-   a->AddTestIntegrator(nullptr,
-         new TransposeIntegrator(new MixedCurlIntegrator(negomegamu_cf)),0, 1);
-   // -i ω ϵ₀ϵ(∇ × δE, δH) = -i (ωϵ₀(ϵᵣ+iϵᵢ) A ∇ δE,δE), A = [0 1; -1 0]
-   //                       =  (ω ϵ₀ ϵᵢ A ∇ δE,δE) + i (-ω ϵ₀ ϵᵣ A ∇ δE,δE)
-   a->AddTestIntegrator(new MixedVectorGradientIntegrator(eps0omeg_eps_i_rot),
-                        new MixedVectorGradientIntegrator(negeps0omeg_eps_r_rot),0, 1);
-   // i ω μ₀ (∇ × δH ,δE) = i (ω μ₀ ∇ × δH, δE )
-   a->AddTestIntegrator(nullptr,new MixedCurlIntegrator(omegamu_cf),
-                        1, 0);
-   // i ω ϵ₀ϵ̄ (δH, ∇ × δE ) = i (ω ϵ₀(ϵᵣ -i ϵᵢ) δH, A ∇ δE) 
-   //                        = ( δH, ω ϵ₀ ϵᵢ A ∇ δE) + i (δH, ω ϵ₀ ϵᵣ A ∇ δE)
+   // ω μ₀ (δE,∇ × δH) 
    a->AddTestIntegrator(
-      new TransposeIntegrator(new MixedVectorGradientIntegrator(eps0omeg_eps_i_rot)),
-      new TransposeIntegrator(new MixedVectorGradientIntegrator(eps0omeg_eps_r_rot)),1, 0);
+         new TransposeIntegrator(new MixedCurlIntegrator(omegamu_cf)),
+         nullptr,0, 1);
+   //  ωϵ₀ϵ(∇ × δE, δH) = ωϵ₀(ϵᵣ+iϵᵢ) A ∇ δE,δE), A = [0 1; -1 0]
+   //                   = (ω ϵ₀ ϵᵣ A ∇ δE,δE) + i (ω ϵ₀ ϵᵢ A ∇ δE,δE)
+   a->AddTestIntegrator(new MixedVectorGradientIntegrator(eps0omeg_eps_r_rot),
+                        new MixedVectorGradientIntegrator(eps0omeg_eps_i_rot),0, 1);
+   // ωμ₀(∇ × δH ,δE)  
+   a->AddTestIntegrator(new MixedCurlIntegrator(omegamu_cf),nullptr,
+                        1, 0);
+   // ω ϵ₀ϵ (δH, ∇ × δE ) = ω (ϵ₀ϵᵣ + i ϵᵢ) δH, A ∇ δE) 
+   //                     = (δH, ωϵ₀ ϵᵣᵀ A ∇ δE) + i (δH, ω ϵ₀ ϵᵢᵀ A ∇ δE)
+   a->AddTestIntegrator(
+      new TransposeIntegrator(new MixedVectorGradientIntegrator(eps0omeg_eps_r_t_rot)),
+      new TransposeIntegrator(new MixedVectorGradientIntegrator(eps0omeg_eps_i_t_rot)),1, 0);
    // (ωϵ₀ϵ)(ωϵ₀ϵ)^*  (δH, δH)
    // (MᵣMᵣᵗ + MᵢMᵢᵗ) + i (MᵢMᵣᵗ - MᵣMᵢᵗ)
    a->AddTestIntegrator(new VectorFEMassIntegrator(Mreal_cf),
@@ -530,20 +510,20 @@ int main(int argc, char *argv[])
    // (∇×δH ,∇×δH)
    a->AddTestIntegrator(new CurlCurlIntegrator(one_cf),nullptr,1,1);
    // (δH,δH)
-   a->AddTestIntegrator(new VectorFEMassIntegrator(one_cf),nullptr,1,1);
+   a->AddTestIntegrator(new VectorFEMassIntegrator(norm_scale_cf),nullptr,1,1);
 
    for (int i = 0; i < ndiffusionequations; i++)
    {
       // (∇δJ,∇δJ) 
-      // a->AddTestIntegrator(new VectorDiffusionIntegrator(one_cf),nullptr,
-                           // i+2,i+2);
+      a->AddTestIntegrator(new VectorDiffusionIntegrator(one_cf),nullptr,
+                           i+2,i+2);
       // (b⋅∇δJ, b⋅∇δJ)
-      a->AddTestIntegrator(new DirectionalDiffusionIntegrator(scaled_b_cf),nullptr,
+      // a->AddTestIntegrator(new DirectionalDiffusionIntegrator(scaled_b_cf),nullptr,
       // a->AddTestIntegrator(new DirectionalDiffusionIntegrator(b_cf),nullptr,
-                           i+2,i+2);                     
+                           // i+2,i+2);                     
       // (δJ,δJ)
-      // a->AddTestIntegrator(new VectorMassIntegrator(one_cf),nullptr, 
-      a->AddTestIntegrator(new VectorMassIntegrator(*c_coeffs[i]),nullptr, 
+      a->AddTestIntegrator(new VectorMassIntegrator(norm_scale_cf),nullptr, 
+      // a->AddTestIntegrator(new VectorMassIntegrator(*c_coeffs[i]),nullptr, 
                            i+2,i+2);
    }
 
@@ -618,16 +598,15 @@ int main(int argc, char *argv[])
       paraview_dc->RegisterField("H_i",pgf_i[1]);      
       if (eld)
       {
-         paraview_dc->RegisterField("Jh_1_r",pgf_r[2]);
-         paraview_dc->RegisterField("Jh_1_i",pgf_i[2]);
-         paraview_dc->RegisterField("Jh_2_r",pgf_r[3]);
-         paraview_dc->RegisterField("Jh_2_i",pgf_i[3]);
+         paraview_dc->RegisterField("Jh_1_r",pgf_r[4]);
+         paraview_dc->RegisterField("Jh_1_i",pgf_i[4]);
+         paraview_dc->RegisterField("Jh_2_r",pgf_r[5]);
+         paraview_dc->RegisterField("Jh_2_i",pgf_i[5]);
       }
    }
 
    Array<int> ess_tdof_list;
    Array<int> ess_tdof_listJ;
-   Array<int> ess_tdof_listJhat;
    Array<int> ess_bdr;
    Array<int> one_r_bdr;
    Array<int> one_i_bdr;
@@ -642,38 +621,22 @@ int main(int argc, char *argv[])
       negone_r_bdr.SetSize(pmesh.bdr_attributes.Max());
       negone_i_bdr.SetSize(pmesh.bdr_attributes.Max());
       ess_bdr = 1;
-
-      // remove internal boundaries
-      for (int i = 0; i<int_bdr_attr.Size(); i++)
-      {
-         ess_bdr[int_bdr_attr[i]-1] = 0;
-      }
-
-      pfes[2+ndiffusionequations]->GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
+      pfes[2]->GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
       for (int j = 0; j < ess_tdof_list.Size(); j++)
       {
-         ess_tdof_list[j] += toffsets[2+ndiffusionequations];
+         ess_tdof_list[j] += toffsets[2];
       }
-      // ess_bdr=1;
       for (int i = 0; i<ndiffusionequations;i++)
       {
          ess_tdof_listJ.SetSize(0);
-         ess_tdof_listJhat.SetSize(0);
-         pfes[i+2]->GetEssentialTrueDofs(ess_bdr, ess_tdof_listJ);
-         pfes[i+6]->GetEssentialTrueDofs(ess_bdr, ess_tdof_listJhat);
+         pfes[i+4]->GetEssentialTrueDofs(ess_bdr, ess_tdof_listJ);
          for (int j = 0; j < ess_tdof_listJ.Size(); j++)
          {
-            ess_tdof_listJ[j] += toffsets[i+2];
+            ess_tdof_listJ[j] += toffsets[i+4];
          }
-         for (int j = 0; j < ess_tdof_listJhat.Size(); j++)
-         {
-            ess_tdof_listJhat[j] += toffsets[i+6];
-         }
-
          ess_tdof_list.Append(ess_tdof_listJ);
-         // ess_tdof_list.Append(ess_tdof_listJhat);
       }
-
+   
       one_r_bdr = 0;  one_i_bdr = 0;
       negone_r_bdr = 0;  negone_i_bdr = 0;
       // attr = 30,2 (real)
@@ -694,10 +657,10 @@ int main(int argc, char *argv[])
    VectorConstantCoefficient rot_one_x_cf(rot_one_x);
    VectorConstantCoefficient rot_negone_x_cf(rot_negone_x);
 
-   pgf_r[2+ndiffusionequations]->ProjectBdrCoefficientNormal(rot_one_x_cf, one_r_bdr);
-   pgf_r[2+ndiffusionequations]->ProjectBdrCoefficientNormal(rot_negone_x_cf, negone_r_bdr);
-   pgf_i[2+ndiffusionequations]->ProjectBdrCoefficientNormal(rot_one_x_cf, one_i_bdr);
-   pgf_i[2+ndiffusionequations]->ProjectBdrCoefficientNormal(rot_negone_x_cf, negone_i_bdr);
+   pgf_r[2]->ProjectBdrCoefficientNormal(rot_one_x_cf, one_r_bdr);
+   pgf_r[2]->ProjectBdrCoefficientNormal(rot_negone_x_cf, negone_r_bdr);
+   pgf_i[2]->ProjectBdrCoefficientNormal(rot_one_x_cf, one_i_bdr);
+   pgf_i[2]->ProjectBdrCoefficientNormal(rot_negone_x_cf, negone_i_bdr);
 
    OperatorPtr Ah;
    Vector X,B;
@@ -718,8 +681,28 @@ int main(int argc, char *argv[])
       {
          A_r_matrices(i,j) = dynamic_cast<HypreParMatrix*>(&BlockA_r->GetBlock(i,j));
          A_i_matrices(i,j) = dynamic_cast<HypreParMatrix*>(&BlockA_i->GetBlock(i,j));
+
+         // std::ostringstream fname_real, fname_imag;
+         // fname_real << "Areal_" << i << "_" << j << ".dat";
+         // fname_imag << "Aimag_" << i << "_" << j << ".dat";
+
+         // // Open file streams
+         // std::ofstream out_real(fname_real.str());
+         // std::ofstream out_imag(fname_imag.str());
+
+         // // Print to files
+         // A_r_matrices(i,j)->PrintMatlab(out_real);
+         // A_i_matrices(i,j)->PrintMatlab(out_imag);
+
+         // mfem::out << "Wrote matrices to files: " << fname_real.str() << ", " << fname_imag.str() << endl;
+         // cin.get();
       }
    }
+
+
+
+
+
 
 
    HypreParMatrix * Ahr = HypreParMatrixFromBlocks(A_r_matrices);
@@ -732,7 +715,7 @@ int main(int argc, char *argv[])
    {
       mfem::out << "Assembly finished successfully." << endl;
    }
-   HypreParMatrix *A = Ahc_hypre->GetSystemMatrix();
+      HypreParMatrix *A = Ahc_hypre->GetSystemMatrix();
 
 #ifdef MFEM_USE_MUMPS
    if (mumps_solver)
@@ -755,17 +738,9 @@ int main(int argc, char *argv[])
    int num_iter = -1;
 
    Array<int> tdof_offsets(2*nblocks+1);
-   int trace_idx_offset;
-   if (eld)
-   {
-      trace_idx_offset = (static_cond) ? 2 : 4;
-   }
-   else
-   {
-      trace_idx_offset = (static_cond) ? 0 : 2;
-   }
-   
+   int skip = (static_cond) ? 0 : 2;
    tdof_offsets[0] = 0;
+   int k = (static_cond) ? 2 : 0;
    for (int i=0; i<nblocks; i++)
    {
       tdof_offsets[i+1] = A_r_matrices(i,i)->Height();
@@ -773,38 +748,10 @@ int main(int argc, char *argv[])
    }
    tdof_offsets.PartialSum();
 
-   BlockOperator blockA(tdof_offsets);
-   for (int i = 0; i<nblocks; i++)
-   {
-      for (int j = 0; j<nblocks; j++)
-      {
-         blockA.SetBlock(i,j,&BlockA_r->GetBlock(i,j));
-         blockA.SetBlock(i,j+nblocks,&BlockA_i->GetBlock(i,j), -1.0);
-         blockA.SetBlock(i+nblocks,j+nblocks,&BlockA_r->GetBlock(i,j));
-         blockA.SetBlock(i+nblocks,j,&BlockA_i->GetBlock(i,j));
-      }
-   }
-
-
    if (!mumps_solver)
    {
 
-      // BlockDiagonalPreconditioner M(tdof_offsets);
-      BlockTriangularSymmetricPreconditioner M(tdof_offsets);
-      M.SetOperator(blockA);
-      int numblocks = blockA.NumRowBlocks();
-      for (int i = 0; i<numblocks; i++)
-      {
-         for (int j = 0; j<numblocks; j++)
-         {
-            if (i != j)
-            {
-               M.SetBlock(i,j,&blockA.GetBlock(i,j));
-            }
-         }
-      }
-
-
+      BlockDiagonalPreconditioner M(tdof_offsets);
 
       if (!static_cond)
       {
@@ -815,60 +762,58 @@ int main(int argc, char *argv[])
          HypreBoomerAMG * solver_H = new HypreBoomerAMG((HypreParMatrix &)
                                                    BlockA_r->GetBlock(1,1));
          solver_H->SetPrintLevel(0);
+         // solver_H->SetSystemsOptions(dim);
          M.SetDiagonalBlock(0,solver_E);
          M.SetDiagonalBlock(1,solver_H);
          M.SetDiagonalBlock(nblocks,solver_E);
          M.SetDiagonalBlock(nblocks+1,solver_H);
       }
       HypreAMS * solver_hatE = 
-      new HypreAMS((HypreParMatrix &)BlockA_r->GetBlock(trace_idx_offset,
-                                    trace_idx_offset), pfes[2+ndiffusionequations]);
+      new HypreAMS((HypreParMatrix &)BlockA_r->GetBlock(skip,
+                                    skip), pfes[2]);
       HypreBoomerAMG * solver_hatH = new HypreBoomerAMG((HypreParMatrix &)
-                 BlockA_r->GetBlock(trace_idx_offset+1,trace_idx_offset+1));
+                                     BlockA_r->GetBlock(skip+1,skip+1));
       solver_hatE->SetPrintLevel(0);
       solver_hatH->SetPrintLevel(0);
       solver_hatH->SetRelaxType(88);
 
-      M.SetDiagonalBlock(trace_idx_offset,solver_hatE);
-      M.SetDiagonalBlock(trace_idx_offset+1,solver_hatH);
-      M.SetDiagonalBlock(trace_idx_offset+nblocks,solver_hatE);
-      M.SetDiagonalBlock(trace_idx_offset+nblocks+1,solver_hatH);
+      M.SetDiagonalBlock(skip,solver_hatE);
+      M.SetDiagonalBlock(skip+1,solver_hatH);
+      M.SetDiagonalBlock(skip+nblocks,solver_hatE);
+      M.SetDiagonalBlock(skip+nblocks+1,solver_hatH);
 
       if (eld)
       {
-         int j = (static_cond) ? 0 : 2;
          HypreBoomerAMG * solver_J1 = new HypreBoomerAMG((HypreParMatrix &)
-                          BlockA_r->GetBlock(j,j));
+                               BlockA_r->GetBlock(skip+2,skip+2));
          solver_J1->SetPrintLevel(0);
          solver_J1->SetSystemsOptions(dim);
-         M.SetDiagonalBlock(j,solver_J1);
-         M.SetDiagonalBlock(nblocks+j,solver_J1);
+         M.SetDiagonalBlock(skip+2,solver_J1);
+         M.SetDiagonalBlock(skip+nblocks+2,solver_J1);
          HypreBoomerAMG * solver_J2 = new HypreBoomerAMG((HypreParMatrix &)
-                               BlockA_r->GetBlock(j+1,j+1));
+                               BlockA_r->GetBlock(skip+3,skip+3));
          solver_J2->SetPrintLevel(0);
          solver_J2->SetSystemsOptions(dim);
-         M.SetDiagonalBlock(j+1,solver_J2);
-         M.SetDiagonalBlock(nblocks+j+1,solver_J2);
-
+         M.SetDiagonalBlock(skip+3,solver_J2);
+         M.SetDiagonalBlock(skip+nblocks+3,solver_J2);
          HypreBoomerAMG * solver_hatJ1 = new HypreBoomerAMG((HypreParMatrix &)
-                  BlockA_r->GetBlock(trace_idx_offset+2,trace_idx_offset+2));
+                                            BlockA_r->GetBlock(skip+4,skip+4));
+         solver_hatJ1->SetPrintLevel(0);
          solver_hatJ1->SetSystemsOptions(dim);
          solver_hatJ1->SetRelaxType(88);
-         solver_hatJ1->SetPrintLevel(0);
-         M.SetDiagonalBlock(trace_idx_offset+2,solver_hatJ1);
-         M.SetDiagonalBlock(trace_idx_offset+nblocks+2,solver_hatJ1);
-
+         M.SetDiagonalBlock(skip+4,solver_hatJ1);
+         M.SetDiagonalBlock(skip+nblocks+4,solver_hatJ1);
          HypreBoomerAMG * solver_hatJ2 = new HypreBoomerAMG((HypreParMatrix &)
-                     BlockA_r->GetBlock(trace_idx_offset+3,trace_idx_offset+3));
+                                            BlockA_r->GetBlock(skip+5,skip+5));
+         solver_hatJ2->SetPrintLevel(0);
          solver_hatJ2->SetSystemsOptions(dim);
          solver_hatJ2->SetRelaxType(88);
-         solver_hatJ2->SetPrintLevel(0);
-         M.SetDiagonalBlock(trace_idx_offset+3,solver_hatJ2);
-         M.SetDiagonalBlock(trace_idx_offset+nblocks+3,solver_hatJ2);
+         M.SetDiagonalBlock(skip+5,solver_hatJ2);
+         M.SetDiagonalBlock(skip+nblocks+5,solver_hatJ2);
       }
       CGSolver cg(MPI_COMM_WORLD);
       cg.SetRelTol(1e-10);
-      cg.SetMaxIter(10000);
+      cg.SetMaxIter(1000);
       cg.SetPrintLevel(1);
       cg.SetPreconditioner(M);
       cg.SetOperator(*A);
@@ -888,13 +833,6 @@ int main(int argc, char *argv[])
    E_par_r.ProjectCoefficient(par_e_r);
    E_par_i.ProjectCoefficient(par_e_i);
    
-   // rescale the J solutions
-   for (int i = 0; i < ndiffusionequations; ++i)
-   {
-      (*pgf_r[2+i]) /= balance_scale;
-      (*pgf_i[2+i]) /= balance_scale;
-   }
-
    if (visualization)
    {
       const char * keys = nullptr;

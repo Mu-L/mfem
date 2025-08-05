@@ -18,6 +18,7 @@
 #include "mfem.hpp"
 #include "../util/pcomplexweakform.hpp"
 #include "../util/pcomplexblockform.hpp"
+#include "../util/blockcomplexhypremat.hpp"
 #include "../util/utils.hpp"
 #include "../util/maxwell_utils.hpp"
 #include "../../common/mfem-common.hpp"
@@ -145,11 +146,13 @@ int main(int argc, char *argv[])
 
    Vector cvals(ndiffusionequations);
    Vector csigns(ndiffusionequations);
+   real_t cfactor = 1e-6;
    if (eld)
    {
       cvals(0)  = 25e6;  cvals(1)  = 1e6;
       csigns(0) = -1.0;  csigns(1) = 1.0;
    }
+   cvals *= cfactor; // scale the coefficients
    
    real_t omega = 2.*M_PI*rnum;
    if (eld && !debug) 
@@ -211,6 +214,7 @@ int main(int argc, char *argv[])
    FunctionCoefficient P_cf_r(pfunc_r), P_cf_i(pfunc_i); 
 
    VectorFunctionCoefficient b_cf(dim,bfunc);// b
+   ScalarVectorProductCoefficient scaledb_cf(sqrt(cfactor), b_cf); 
    MatrixFunctionCoefficient bb_cf(dim,bcrossb); // b⊗b
 
    MatrixSumCoefficient oneminusbb(Mone_cf, bb_cf, 1.0, -1.0); // 1 - b⊗b
@@ -292,12 +296,12 @@ int main(int argc, char *argv[])
                           new VectorFEMassIntegrator(m_cf_i), 0, 0);
    if (eld)
    {
-      //  i ω²ϵ₀((J₁+J₂),F)
       for (int i = 0; i<ndiffusionequations; i++)
       {
+         //  i ω²ϵ₀((J₁+J₂),F)
          a->AddDomainIntegrator(nullptr, new TransposeIntegrator(new VectorFEMassIntegrator(eps0omeg2)), i+1, 0);
          //  ( (b⋅∇)J₁ , (b⋅∇) G)
-         a->AddDomainIntegrator(new DirectionalDiffusionIntegrator(b_cf), nullptr, i+1, i+1);
+         a->AddDomainIntegrator(new DirectionalDiffusionIntegrator(scaledb_cf), nullptr, i+1, i+1);
          // cᵢ (J₁ , G)
          a->AddDomainIntegrator(new VectorMassIntegrator(*pw_c_coeffs[i]), nullptr, i+1, i+1);
          // ±cᵢ(P(r) (b ⊗ b) E, G)
@@ -429,9 +433,15 @@ int main(int argc, char *argv[])
    Vector B, X;
 
    Vector b(x.Size()); b = 0.0;
-   a->FormLinearSystem(ess_tdof_list, x, b, Ah, X, B);
-   
+
+   // a->FormLinearSystem(ess_tdof_list, x, b, Ah, X, B);
+   Array<int> empty;
+   a->FormLinearSystem(empty, x, b, Ah, X, B,1);
+
    ComplexOperator * Ahc = Ah.As<ComplexOperator>();
+
+   ParBlockComplexSystem aa(Ahc);
+   Ahc = aa.EliminateBC(ess_tdof_list, X, B);
 
    BlockOperator * BlockA_r = dynamic_cast<BlockOperator *>(&Ahc->real());
    BlockOperator * BlockA_i = dynamic_cast<BlockOperator *>(&Ahc->imag());

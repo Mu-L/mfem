@@ -7,8 +7,8 @@
 // This example code demonstrates the use of MFEM to define and solve
 // the "ultraweak" (UW) DPG formulation for the Maxwell problem
 
-//      ∇×(1/μ ∇×E) - ω^2 ϵ E = Ĵ ,   in Ω
-//                E×n = E_0, on ∂Ω
+//      ∇×(1/μ ∇×E) - ω^2 ϵ₀ ϵ E = 0 ,   in Ω
+//                           E×n = E_0, on ∂Ω
 
 // The primal-DPG formulation is obtained by integration by parts
 // and the introduction of trace unknowns on the mesh skeleton
@@ -16,8 +16,8 @@
 // in 3D
 // E ∈ H(curl)
 // Ê ∈ H_0^1/2(Ω)(curl, Γ_h)
-//  1/μ (∇×E , ∇×F) + (ω^2 ϵ , F) + <Ê , F × n> = 0,      ∀ F ∈ H(curl,Ω)
-//                                        Ê × n = E_0     on ∂Ω
+//  1/μ (∇×E , ∇×F) + (ω^2 ϵ₀ ϵ , F) + <Ê , F × n> = 0,      ∀ F ∈ H(curl,Ω)
+//                                           Ê × n = E_0     on ∂Ω
 
 #include "mfem.hpp"
 #include "../util/utils.hpp"
@@ -26,6 +26,50 @@
 #include "../../common/mfem-common.hpp"
 #include <fstream>
 #include <iostream>
+
+real_t delta = 0.01; 
+real_t a0 = -1.0;   
+real_t a1 = 5.0;    
+
+real_t pfunc_r(const Vector &x)
+{
+   real_t r = std::sqrt(x(0) * x(0) + x(1) * x(1));
+   return a0 + a1 *(r-0.9);
+}
+
+real_t pfunc_i(const Vector &x)
+{
+   return delta;   
+}
+
+real_t sfunc_r(const Vector &x)
+{
+   return 1.0;
+}
+
+real_t sfunc_i(const Vector &x)
+{
+   return delta;
+}
+
+void bfunc(const Vector &x, Vector &b)
+{
+   real_t r = std::sqrt(x(0) * x(0) + x(1) * x(1));
+   int dim = x.Size();
+   b.SetSize(dim); b = 0.0;
+   b(0) = -x(1) / r;
+   b(1) =  x(0) / r;
+   if (dim == 3) b(2) = 0.0;
+}
+
+void bcrossb(const Vector &x, DenseMatrix &bb)
+{
+   Vector b;
+   bfunc(x, b);
+   bb.SetSize(b.Size());
+   MultVVt(b, bb);
+}
+
 
 using namespace std;
 using namespace mfem;
@@ -37,18 +81,7 @@ int main(int argc, char *argv[])
    int myid = Mpi::WorldRank();
    Hypre::Init();
 
-   // fine mesh (trianles)
-   // default mesh
-   const char *mesh_file = "data/mesh-tri34K.mesh";
-   // coarse mesh (triangles)
-   // const char *mesh_file = "data/mesh-tri11K.mesh";
-   // coarse mesh (quadrilaterals)
-   // const char *mesh_file = "data/mesh-quad5K.mesh";
-
-   // epsilon tensor
-   const char * eps_r_file = nullptr;
-   const char * eps_i_file = nullptr;
-
+   const char *mesh_file = "data/LH_hot.msh";
    int order = 2;
    int delta_order = 1;
    int par_ref_levels = 0;
@@ -57,9 +90,9 @@ int main(int argc, char *argv[])
    // real_t rnum=4.6e9;
    // real_t mu = 1.257e-6/factor;
    // real_t epsilon_scale = 8.8541878128e-12*factor;
-   real_t rnum=4.6;
+   real_t rnum=1.5;
    real_t mu = 1.257;
-   real_t epsilon_scale = 8.8541878128;
+   real_t eps0 = 8.8541878128;
    bool mumps_solver = false;
    real_t theta = 0.0;
 
@@ -110,55 +143,19 @@ int main(int argc, char *argv[])
       args.PrintOptions(cout);
    }
 
-   if (strcmp(mesh_file, "data/mesh-tri34K.mesh") == 0)
-   {
-      eps_r_file = "data/eps-tri34K_r.gf";
-      eps_i_file = "data/eps-tri34K_i.gf";
-   }
-   else if (strcmp(mesh_file, "data/mesh-tri11K.mesh") == 0)
-   {
-      eps_r_file = "data/eps-tri11K_r.gf";
-      eps_i_file = "data/eps-tri11K_i.gf";
-   }
-   else if (strcmp(mesh_file, "data/mesh-quad5K.mesh") == 0)
-   {
-      eps_r_file = "data/eps-quad5K_r.gf";
-      eps_i_file = "data/eps-quad5K_i.gf";
-   }
-   else
-   {
-      MFEM_ABORT("Unknown mesh file: " + string(mesh_file));
-   }
 
    double omega = 2.*M_PI*rnum;
 
    Mesh mesh(mesh_file, 1, 1);
    int dim = mesh.Dimension();
 
-   Array<int> int_bdr_attr;
-   for (int i = 0; i < mesh.GetNBE(); i++)
-   {
-      if (mesh.FaceIsInterior(mesh.GetBdrElementFaceIndex(i)))
-      {
-         int_bdr_attr.Append(mesh.GetBdrAttribute(i));
-      }
-   }
+   mesh.RemoveInternalBoundaries();
 
-   // mesh.RemoveInternalBoundaries();
-   mesh.EnsureNCMesh(true);
-   int * partitioning = mesh.GeneratePartitioning(num_procs);
-
-   ParMesh pmesh(MPI_COMM_WORLD, mesh, partitioning);
-
-   EpsilonMatrixCoefficient eps_r_cf(eps_r_file,&mesh,&pmesh, epsilon_scale);
-   EpsilonMatrixCoefficient eps_i_cf(eps_i_file,&mesh,&pmesh, epsilon_scale);
-   mesh.Clear();
+   ParMesh pmesh(MPI_COMM_WORLD, mesh);
 
    for (int i = 0; i<par_ref_levels; i++)
    {
       pmesh.UniformRefinement();
-      eps_r_cf.Update();
-      eps_i_cf.Update();
    }
 
    FiniteElementCollection *E_fec = new ND_FECollection(order,dim);
@@ -187,22 +184,72 @@ int main(int argc, char *argv[])
       mfem::out << "Global number of dofs = " << gdofs << endl;
    }
 
-   // Bilinear form coefficients
+   // Define the coefficients 
+   ConstantCoefficient muinv(1./mu);
    ConstantCoefficient one(1.0);
-   ConstantCoefficient invmu_cf(1./mu);
 
-   // Bilinear form coefficients
-   ScalarMatrixProductCoefficient m_cf_r(-omega*omega, eps_r_cf);
-   ScalarMatrixProductCoefficient m_cf_i(-omega*omega, eps_i_cf);
+   int nattr = (pmesh.attributes.Size()) ? pmesh.attributes.Max() : 0;
+   Array<int> attr(nattr);
+   for (int i = 0; i<nattr; i++) { attr[i] = i+1; }
 
+   Vector zero(dim); zero = 0.0;
+   Vector one_x(dim); one_x = 0.0; one_x(0) = 1.0;
+   Vector negone_x(dim); negone_x = 0.0; negone_x(0) = -1.0;
+   VectorConstantCoefficient zero_vcf(zero);
+   VectorConstantCoefficient one_x_cf(one_x);
+   VectorConstantCoefficient negone_x_cf(negone_x);
+
+   DenseMatrix Mone(dim); 
+   Mone = 0.0; Mone(0,0) = Mone(1,1) = 1.0;
+   MatrixConstantCoefficient Mone_cf(Mone);
+   DenseMatrix Mzero(dim); Mzero = 0.0;
+   MatrixConstantCoefficient Mzero_cf(Mzero);
+
+   Array<MatrixCoefficient*> coefs_r(nattr);
+   Array<MatrixCoefficient*> coefs_i(nattr);
+   for (int i = 0; i < nattr-1; ++i)
+   {
+      coefs_r[i] = &Mone_cf;
+      coefs_i[i] = &Mzero_cf;
+   }
+
+   // S(r) 
+   FunctionCoefficient S_cf_r(sfunc_r), S_cf_i(sfunc_i);
+   // P(r) 
+   FunctionCoefficient P_cf_r(pfunc_r), P_cf_i(pfunc_i); 
+
+   VectorFunctionCoefficient b_cf(dim,bfunc);// b
+   MatrixFunctionCoefficient bb_cf(dim,bcrossb); // b⊗b
+
+   MatrixSumCoefficient oneminusbb(Mone_cf, bb_cf, 1.0, -1.0); // 1 - b⊗b
+
+   // S(r) (I - b⊗b)
+   ScalarMatrixProductCoefficient Soneminusbb_r(S_cf_r, oneminusbb), Soneminusbb_i(S_cf_i, oneminusbb); 
+
+   // P(r) b⊗b 
+   ScalarMatrixProductCoefficient P_cf_bb_r(P_cf_r, bb_cf), P_cf_bb_i(P_cf_i, bb_cf); 
+
+   // εᵣ = S(r) (I - b⊗b) + P(r) b⊗b 
+   MatrixSumCoefficient eps_r(Soneminusbb_r, P_cf_bb_r, 1.0, 1.0); 
+   MatrixSumCoefficient eps_i(Soneminusbb_i, P_cf_bb_i, 1.0, 1.0); 
+
+   coefs_r[nattr-1] = &eps_r;
+   coefs_i[nattr-1] = &eps_i;
+
+   PWMatrixCoefficient eps_cf_r(dim, attr, coefs_r);
+   PWMatrixCoefficient eps_cf_i(dim, attr, coefs_i);
+
+   ConstantCoefficient negeps0omeg2(-eps0 * omega * omega);
+
+   ScalarMatrixProductCoefficient m_cf_r(negeps0omeg2, eps_cf_r);
+   ScalarMatrixProductCoefficient m_cf_i(negeps0omeg2, eps_cf_i);
 
    ParComplexDPGWeakForm * a = new ParComplexDPGWeakForm(trial_fes,test_fec);
-   a->StoreMatrices(); // needed for AMR
 
-   // (∇ × E,∇ × F)
-   a->AddTrialIntegrator(new CurlCurlIntegrator(invmu_cf), nullptr,0,0);
+   // (1/μ₀ ∇ × E,∇ × F)
+   a->AddTrialIntegrator(new CurlCurlIntegrator(muinv), nullptr,0,0);
 
-   // -(ω^2 ϵ, F)
+   // -(ω^2 ϵ₀ ϵ, F)
    const IntegrationRule *irs[Geometry::NumGeom];
    int order_quad = 2*order + 2;
    for (int i = 0; i < Geometry::NumGeom; ++i)
@@ -268,306 +315,201 @@ int main(int argc, char *argv[])
       paraview_dc->RegisterField("E_theta_i",&E_theta_i);
    }
 
-   real_t res0 = 0.;
-   real_t err0 = 0.;
-   int dof0 = 0; // init to suppress gcc warning
-
-   Array<int> elements_to_refine;
    if (static_cond) { a->EnableStaticCondensation(); }
 
-   for (int it = 0; it<=amr_ref_levels; it++)
+   a->Assemble();
+
+   Array<int> ess_tdof_list;
+   Array<int> ess_bdr;
+   Array<int> one_r_bdr;
+   Array<int> one_i_bdr;
+   Array<int> negone_r_bdr;
+   Array<int> negone_i_bdr;
+
+   if (pmesh.bdr_attributes.Size())
    {
-      a->Assemble();
+      ess_bdr.SetSize(pmesh.bdr_attributes.Max());
+      one_r_bdr.SetSize(pmesh.bdr_attributes.Max());
+      one_i_bdr.SetSize(pmesh.bdr_attributes.Max());
+      negone_r_bdr.SetSize(pmesh.bdr_attributes.Max());
+      negone_i_bdr.SetSize(pmesh.bdr_attributes.Max());
+      ess_bdr = 1;
 
-      Array<int> ess_tdof_list;
-      Array<int> ess_bdr;
-      Array<int> one_r_bdr;
-      Array<int> one_i_bdr;
-      Array<int> negone_r_bdr;
-      Array<int> negone_i_bdr;
+      E_fes->GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
+      one_r_bdr = 0;  one_i_bdr = 0;
+      negone_r_bdr = 0;  negone_i_bdr = 0;
 
-      if (pmesh.bdr_attributes.Size())
+      // attr = 30,2 (real)
+      one_r_bdr[30-1] = 1;  one_r_bdr[2-1] = 1;
+      // attr = 26,6 (imag)
+      one_i_bdr[26-1] = 1;  one_i_bdr[6-1] = 1;
+      // attr = 22,10 (real)
+      negone_r_bdr[22-1] = 1; negone_r_bdr[10-1] = 1;
+      // attr = 18,14 (imag)
+      negone_i_bdr[18-1] = 1; negone_i_bdr[14-1] = 1;
+   }
+
+
+   Array<int> offsets(3);
+   offsets[0] = 0;
+   offsets[1] = E_fes->GetVSize();
+   offsets[2] = hatE_fes->GetVSize();
+   offsets.PartialSum();
+
+   Vector x(2*offsets.Last());
+   x = 0.;
+   double * xdata = x.GetData();
+
+   E_gf.real().MakeRef(E_fes,&xdata[0]);
+   E_gf.imag().MakeRef(E_fes,&xdata[offsets.Last()]);
+
+
+   E_gf.ProjectBdrCoefficientTangent(one_x_cf,zero_vcf, one_r_bdr);
+   E_gf.ProjectBdrCoefficientTangent(negone_x_cf,zero_vcf, negone_r_bdr);
+   E_gf.ProjectBdrCoefficientTangent(zero_vcf,one_x_cf, one_i_bdr);
+   E_gf.ProjectBdrCoefficientTangent(zero_vcf,negone_x_cf, negone_i_bdr);
+
+   OperatorPtr Ah;
+   Vector X,B;
+   a->FormLinearSystem(ess_tdof_list,x,Ah, X,B);
+
+   ComplexOperator * Ahc = Ah.As<ComplexOperator>();
+
+   BlockOperator * BlockA_r = dynamic_cast<BlockOperator *>(&Ahc->real());
+   BlockOperator * BlockA_i = dynamic_cast<BlockOperator *>(&Ahc->imag());
+
+   int num_blocks = BlockA_r->NumRowBlocks();
+   Array<int> tdof_offsets(2*num_blocks+1);
+
+   tdof_offsets[0] = 0;
+   for (int i=0; i<num_blocks; i++)
+   {
+      const int h = BlockA_r->GetBlock(i,i).Height();
+      tdof_offsets[i+1] = h;
+      tdof_offsets[num_blocks+i+1] = h;
+   }
+   tdof_offsets.PartialSum();
+
+   BlockOperator blockA(tdof_offsets);
+   for (int i = 0; i<num_blocks; i++)
+   {
+      for (int j = 0; j<num_blocks; j++)
       {
-         ess_bdr.SetSize(pmesh.bdr_attributes.Max());
-         one_r_bdr.SetSize(pmesh.bdr_attributes.Max());
-         one_i_bdr.SetSize(pmesh.bdr_attributes.Max());
-         negone_r_bdr.SetSize(pmesh.bdr_attributes.Max());
-         negone_i_bdr.SetSize(pmesh.bdr_attributes.Max());
-         ess_bdr = 1;
-
-         // remove internal boundaries
-         for (int i = 0; i<int_bdr_attr.Size(); i++)
-         {
-            ess_bdr[int_bdr_attr[i]-1] = 0;
-         }
-         E_fes->GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
-         one_r_bdr = 0;  one_i_bdr = 0;
-         negone_r_bdr = 0;  negone_i_bdr = 0;
-
-         // attr = 30,2 (real)
-         one_r_bdr[30-1] = 1;  one_r_bdr[2-1] = 1;
-         // attr = 26,6 (imag)
-         one_i_bdr[26-1] = 1;  one_i_bdr[6-1] = 1;
-         // attr = 22,10 (real)
-         negone_r_bdr[22-1] = 1; negone_r_bdr[10-1] = 1;
-         // attr = 18,14 (imag)
-         negone_i_bdr[18-1] = 1; negone_i_bdr[14-1] = 1;
+         blockA.SetBlock(i,j,&BlockA_r->GetBlock(i,j));
+         blockA.SetBlock(i,j+num_blocks,&BlockA_i->GetBlock(i,j), -1.0);
+         blockA.SetBlock(i+num_blocks,j+num_blocks,&BlockA_r->GetBlock(i,j));
+         blockA.SetBlock(i+num_blocks,j,&BlockA_i->GetBlock(i,j));
       }
+   }
 
-
-      Array<int> offsets(3);
-      offsets[0] = 0;
-      offsets[1] = E_fes->GetVSize();
-      offsets[2] = hatE_fes->GetVSize();
-      offsets.PartialSum();
-
-      Vector x(2*offsets.Last());
-      x = 0.;
-      double * xdata = x.GetData();
-
-      E_gf.real().MakeRef(E_fes,&xdata[0]);
-      E_gf.imag().MakeRef(E_fes,&xdata[offsets.Last()]);
-
-      Vector zero(dim); zero = 0.0;
-      VectorConstantCoefficient zero_cf(zero);
-      Vector one_x(dim); one_x = 0.0; one_x(0) = 1.0;
-      Vector negone_x(dim); negone_x = 0.0; negone_x(0) = -1.0;
-      VectorConstantCoefficient one_x_cf(one_x);
-      VectorConstantCoefficient negone_x_cf(negone_x);
-
-      E_gf.ProjectBdrCoefficientTangent(one_x_cf,zero_cf, one_r_bdr);
-      E_gf.ProjectBdrCoefficientTangent(negone_x_cf,zero_cf, negone_r_bdr);
-      E_gf.ProjectBdrCoefficientTangent(zero_cf,one_x_cf, one_i_bdr);
-      E_gf.ProjectBdrCoefficientTangent(zero_cf,negone_x_cf, negone_i_bdr);
-
-      OperatorPtr Ah;
-      Vector X,B;
-      a->FormLinearSystem(ess_tdof_list,x,Ah, X,B);
-
-      ComplexOperator * Ahc = Ah.As<ComplexOperator>();
-
-      BlockOperator * BlockA_r = dynamic_cast<BlockOperator *>(&Ahc->real());
-      BlockOperator * BlockA_i = dynamic_cast<BlockOperator *>(&Ahc->imag());
-
-      int num_blocks = BlockA_r->NumRowBlocks();
-      Array<int> tdof_offsets(2*num_blocks+1);
-
-      tdof_offsets[0] = 0;
-      for (int i=0; i<num_blocks; i++)
-      {
-         const int h = BlockA_r->GetBlock(i,i).Height();
-         tdof_offsets[i+1] = h;
-         tdof_offsets[num_blocks+i+1] = h;
-      }
-      tdof_offsets.PartialSum();
-
-      BlockOperator blockA(tdof_offsets);
+#ifdef MFEM_USE_MUMPS
+   if (mumps_solver)
+   {
+      // Monolithic real part
+      Array2D<const HypreParMatrix * > Ab_r(num_blocks,num_blocks);
+      // Monolithic imag part
+      Array2D<const HypreParMatrix * > Ab_i(num_blocks,num_blocks);
       for (int i = 0; i<num_blocks; i++)
       {
          for (int j = 0; j<num_blocks; j++)
          {
-            blockA.SetBlock(i,j,&BlockA_r->GetBlock(i,j));
-            blockA.SetBlock(i,j+num_blocks,&BlockA_i->GetBlock(i,j), -1.0);
-            blockA.SetBlock(i+num_blocks,j+num_blocks,&BlockA_r->GetBlock(i,j));
-            blockA.SetBlock(i+num_blocks,j,&BlockA_i->GetBlock(i,j));
+            Ab_r(i,j) = &(HypreParMatrix &)BlockA_r->GetBlock(i,j);
+            Ab_i(i,j) = &(HypreParMatrix &)BlockA_i->GetBlock(i,j);
          }
       }
+      HypreParMatrix * A_r = HypreParMatrixFromBlocks(Ab_r);
+      HypreParMatrix * A_i = HypreParMatrixFromBlocks(Ab_i);
 
-#ifdef MFEM_USE_MUMPS
-      if (mumps_solver)
-      {
-         // Monolithic real part
-         Array2D<const HypreParMatrix * > Ab_r(num_blocks,num_blocks);
-         // Monolithic imag part
-         Array2D<const HypreParMatrix * > Ab_i(num_blocks,num_blocks);
-         for (int i = 0; i<num_blocks; i++)
-         {
-            for (int j = 0; j<num_blocks; j++)
-            {
-               Ab_r(i,j) = &(HypreParMatrix &)BlockA_r->GetBlock(i,j);
-               Ab_i(i,j) = &(HypreParMatrix &)BlockA_i->GetBlock(i,j);
-            }
-         }
-         HypreParMatrix * A_r = HypreParMatrixFromBlocks(Ab_r);
-         HypreParMatrix * A_i = HypreParMatrixFromBlocks(Ab_i);
+      ComplexHypreParMatrix Acomplex(A_r, A_i,true,true);
 
-         ComplexHypreParMatrix Acomplex(A_r, A_i,true,true);
+      HypreParMatrix * A = Acomplex.GetSystemMatrix();
 
-         HypreParMatrix * A = Acomplex.GetSystemMatrix();
-
-         MUMPSSolver mumps(MPI_COMM_WORLD);
-         mumps.SetPrintLevel(0);
-         mumps.SetMatrixSymType(MUMPSSolver::MatType::UNSYMMETRIC);
-         mumps.SetOperator(*A);
-         mumps.Mult(B,X);
-         delete A;
-      }
+      MUMPSSolver mumps(MPI_COMM_WORLD);
+      mumps.SetPrintLevel(0);
+      mumps.SetMatrixSymType(MUMPSSolver::MatType::UNSYMMETRIC);
+      mumps.SetOperator(*A);
+      mumps.Mult(B,X);
+      delete A;
+   }
 #else
-      if (mumps_solver)
-      {
-         MFEM_WARNING("MFEM compiled without mumps. Switching to an iterative solver");
-      }
-      mumps_solver = false;
+   if (mumps_solver)
+   {
+      MFEM_WARNING("MFEM compiled without mumps. Switching to an iterative solver");
+   }
+   mumps_solver = false;
 #endif
-      int num_iter = -1;
-      if (!mumps_solver)
+   int num_iter = -1;
+   if (!mumps_solver)
+   {
+      BlockDiagonalPreconditioner M(tdof_offsets);
+      ParFiniteElementSpace *ams_fes = nullptr;
+      if (static_cond)
       {
-         BlockDiagonalPreconditioner M(tdof_offsets);
-         ParFiniteElementSpace *ams_fes = nullptr;
-         if (static_cond)
-         {
-            ams_fes = new ParFiniteElementSpace(&pmesh,
-                                                E_fes->FEColl()->GetTraceCollection());
-         }
-
-         HypreAMS * solver_E = new HypreAMS((HypreParMatrix &)BlockA_r->GetBlock(0,0),
-                                            (static_cond) ? ams_fes : E_fes);
-         solver_E->SetPrintLevel(0);
-         HypreBoomerAMG * solver_hatE = new HypreBoomerAMG((HypreParMatrix &)
-                                                           BlockA_r->GetBlock(1,1));
-         solver_hatE->SetPrintLevel(0);
-         solver_hatE->SetRelaxType(88);
-
-         M.SetDiagonalBlock(0,solver_E);
-         M.SetDiagonalBlock(1,solver_hatE);
-
-         if (myid == 0)
-         {
-            std::cout << "PCG iterations" << endl;
-         }
-
-         CGSolver cg(MPI_COMM_WORLD);
-         cg.SetRelTol(1e-8);
-         cg.SetMaxIter(1000);
-         cg.SetPrintLevel(1);
-         cg.SetPreconditioner(M);
-         cg.SetOperator(blockA);
-         cg.Mult(B, X);
-
-         for (int i = 0; i<num_blocks; i++)
-         {
-            delete &M.GetDiagonalBlock(i);
-         }
-
-         num_iter = cg.GetNumIterations();
-
-      }
-      a->RecoverFEMSolution(X,x);
-
-      Vector & residuals = a->ComputeResidual(x);
-      real_t residual = residuals.Norml2();
-      real_t maxresidual = residuals.Max();
-      real_t globalresidual = residual * residual;
-      MPI_Allreduce(MPI_IN_PLACE, &maxresidual, 1, MPITypeMap<real_t>::mpi_type,
-                    MPI_MAX, MPI_COMM_WORLD);
-      MPI_Allreduce(MPI_IN_PLACE, &globalresidual, 1,
-                    MPITypeMap<real_t>::mpi_type, MPI_SUM, MPI_COMM_WORLD);
-
-      globalresidual = sqrt(globalresidual);
-
-      E_gf.real().MakeRef(E_fes,x.GetData());
-      E_gf.imag().MakeRef(E_fes,&x.GetData()[offsets.Last()]);
-
-      int dofs = 0;
-      for (int i = 0; i<trial_fes.Size(); i++)
-      {
-         dofs += trial_fes[i]->GlobalTrueVSize();
+         ams_fes = new ParFiniteElementSpace(&pmesh,
+                                             E_fes->FEColl()->GetTraceCollection());
       }
 
-      real_t rate_res = (it) ? dim*log(res0/globalresidual)/log((
-                                                                   real_t)dof0/dofs) : 0.0;
+      HypreAMS * solver_E = new HypreAMS((HypreParMatrix &)BlockA_r->GetBlock(0,0),
+                                          (static_cond) ? ams_fes : E_fes);
+      solver_E->SetPrintLevel(0);
+      HypreBoomerAMG * solver_hatE = new HypreBoomerAMG((HypreParMatrix &)
+                                                         BlockA_r->GetBlock(1,1));
+      solver_hatE->SetPrintLevel(0);
+      solver_hatE->SetRelaxType(88);
 
-      res0 = globalresidual;
-      dof0 = dofs;
+      M.SetDiagonalBlock(0,solver_E);
+      M.SetDiagonalBlock(1,solver_hatE);
+      M.SetDiagonalBlock(2,solver_E);
+      M.SetDiagonalBlock(3,solver_hatE);
 
       if (myid == 0)
       {
-         std::ios oldState(nullptr);
-         oldState.copyfmt(std::cout);
-         std::cout << std::right << std::setw(5) << it << " | "
-                   << std::setw(10) <<  dof0 << " | "
-                   << std::setprecision(1) << std::fixed
-                   << std::setw(4) <<  2.0*rnum << " π  | "
-                   << std::setprecision(3);
-         std::cout << std::setprecision(3)
-                   << std::setw(10) << std::scientific <<  res0 << " | "
-                   << std::setprecision(2)
-                   << std::setw(6) << std::fixed << rate_res << " | "
-                   << std::setw(6) << std::fixed << num_iter << " | "
-                   << std::endl;
-         std::cout.copyfmt(oldState);
+         std::cout << "PCG iterations" << endl;
       }
 
-      AzimuthalECoefficient az_e_r(&E_gf.real());
-      AzimuthalECoefficient az_e_i(&E_gf.imag());
+      CGSolver cg(MPI_COMM_WORLD);
+      cg.SetRelTol(1e-8);
+      cg.SetMaxIter(1000);
+      cg.SetPrintLevel(1);
+      cg.SetPreconditioner(M);
+      cg.SetOperator(blockA);
+      cg.Mult(B, X);
 
-      E_theta_r.ProjectCoefficient(az_e_r);
-      E_theta_i.ProjectCoefficient(az_e_i);
-
-      if (visualization)
+      for (int i = 0; i<num_blocks; i++)
       {
-         const char * keys = nullptr;
-         char vishost[] = "localhost";
-         int  visport   = 19916;
-         common::VisualizeField(E_out_r,vishost, visport, E_gf.real(),
-                                "Numerical Electric field (real part)", 0, 0, 500, 500, keys);
-         common::VisualizeField(E_theta_out_r,vishost, visport, E_theta_r,
-                                "Numerical Electric field (Azimuthal-real)", 501, 0, 500, 500, keys);
+         delete &M.GetDiagonalBlock(i);
       }
 
-      if (paraview)
-      {
-         paraview_dc->SetCycle(it);
-         paraview_dc->SetTime((real_t)it);
-         paraview_dc->Save();
-      }
-      if (it == amr_ref_levels)
-      {
-         break;
-      }
+      num_iter = cg.GetNumIterations();
 
-      if (theta > 0.0)
-      {
-         elements_to_refine.SetSize(0);
-         for (int iel = 0; iel<pmesh.GetNE(); iel++)
-         {
-            if (residuals[iel] > theta * maxresidual)
-            {
-               elements_to_refine.Append(iel);
-            }
-         }
-         pmesh.GeneralRefinement(elements_to_refine,1,1);
-      }
-      else
-      {
-         pmesh.UniformRefinement();
-      }
+   }
+   a->RecoverFEMSolution(X,x);
 
-      eps_r_cf.Update();
-      eps_i_cf.Update();
+   E_gf.real().MakeRef(E_fes,x.GetData());
+   E_gf.imag().MakeRef(E_fes,&x.GetData()[offsets.Last()]);
 
-      for (int i =0; i<trial_fes.Size(); i++)
-      {
-         trial_fes[i]->Update(false);
-      }
-      L2_fes.Update();
-      E_theta_r.Update();
-      E_theta_i.Update();
-      E_theta.Update();
+   AzimuthalECoefficient az_e_r(&E_gf.real());
+   AzimuthalECoefficient az_e_i(&E_gf.imag());
 
-      a->Update();
-      // int num_frames = 32;
-      // for (int i = 0; i<num_frames; i++)
-      // {
-      //    real_t t = (real_t)(i % num_frames) / num_frames;
-      //    add(cos(real_t(2.0*M_PI)*t), E_theta_r,
-      //        sin(real_t(2.0*M_PI)*t), E_theta_i, E_theta);
-      //       paraview_tdc->SetCycle(i);
-      //       paraview_tdc->SetTime(t);
-      //       paraview_tdc->Save();
-      // }
-      // delete paraview_tdc;
+   E_theta_r.ProjectCoefficient(az_e_r);
+   E_theta_i.ProjectCoefficient(az_e_i);
 
+   if (visualization)
+   {
+      const char * keys = nullptr;
+      char vishost[] = "localhost";
+      int  visport   = 19916;
+      common::VisualizeField(E_out_r,vishost, visport, E_gf.real(),
+                              "Numerical Electric field (real part)", 0, 0, 500, 500, keys);
+      common::VisualizeField(E_theta_out_r,vishost, visport, E_theta_r,
+                              "Numerical Electric field (Azimuthal-real)", 501, 0, 500, 500, keys);
+   }
+
+   if (paraview)
+   {
+      paraview_dc->SetCycle(0);
+      paraview_dc->SetTime(0.0);
+      paraview_dc->Save();
    }
 
    delete a;

@@ -24,7 +24,7 @@ MFEM_LIB_FILE = mfem_is_not_built
 
 DPG_COMPLEX_SEQ_SRC = ../util/maxwell_utils.cpp ../util/utils.cpp ../util/complexweakform.cpp \
 	../util/complexstaticcond.cpp ../util/pml.cpp ../util/complexblockform.cpp
-DPG_COMPLEX_PAR_SRC = $(DPG_COMPLEX_SEQ_SRC) ../util/pcomplexweakform.cpp ../util/pcomplexblockform.cpp 
+DPG_COMPLEX_PAR_SRC = $(DPG_COMPLEX_SEQ_SRC) ../util/pcomplexweakform.cpp ../util/pcomplexblockform.cpp ../util/blockcomplexhypremat.cpp  
 DPG_COMPLEX_OBJ = $(DPG_COMPLEX_PAR_SRC:.cpp=.o)
 
 PMAXWELL_TOKAMAK_SRC = pmaxwell-tokamak.cpp $(DPG_COMPLEX_PAR_SRC)
@@ -60,11 +60,24 @@ LH_DPG_OBJ = $(LH_DPG_SRC:.cpp=.o)
 LH_ELD_DPG_SRC = lh-eld-dpg.cpp $(DPG_COMPLEX_PAR_SRC)
 LH_ELD_DPG_OBJ = $(LH_ELD_DPG_SRC:.cpp=.o)
 
+LH_ELD_DPG_FEM_SRC = lh-eld-dpg-fem.cpp $(DPG_COMPLEX_PAR_SRC)
+LH_ELD_DPG_FEM_OBJ = $(LH_ELD_DPG_FEM_SRC:.cpp=.o)
+
+LH_ELD_DPG_DEBUG_SRC = lh-eld-dpg-debug.cpp $(DPG_COMPLEX_PAR_SRC)
+LH_ELD_DPG_DEBUG_OBJ = $(LH_ELD_DPG_DEBUG_SRC:.cpp=.o)
+
+LH_ELD_WEAK_SRC = lh-eld-weak.cpp $(DPG_COMPLEX_PAR_SRC)
+LH_ELD_WEAK_OBJ = $(LH_ELD_WEAK_SRC:.cpp=.o)
+
+LH_ELD_DPG_FEM_WEAK_SRC = lh-eld-dpg-fem-weak.cpp $(DPG_COMPLEX_PAR_SRC)
+LH_ELD_DPG_FEM_WEAK_OBJ = $(LH_ELD_DPG_FEM_WEAK_SRC:.cpp=.o)
+
 SEQ_MINIAPPS = 
 PAR_MINIAPPS = pmaxwell-tokamak pmaxwell-fem-tokamak \
  pmaxwell-primal-tokamak pmaxwell-uw-tokamak  \
  pmaxwell-uw-lh pmaxwell-fem-lh pmaxwell-primal-lh \
- lh-fem lh-eld-fem lh-dpg lh-eld-dpg
+ lh-fem lh-eld-fem lh-dpg lh-eld-dpg lh-eld-dpg-debug \
+ lh-eld-dpg-fem lh-eld-weak lh-eld-dpg-fem-weak
 
 ifeq ($(MFEM_USE_MPI),NO)
    MINIAPPS = $(SEQ_MINIAPPS)
@@ -126,6 +139,18 @@ lh-dpg: $(LH_DPG_OBJ)
 
 lh-eld-dpg: $(LH_ELD_DPG_OBJ)
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(LH_ELD_DPG_OBJ) $(COMMON_LIB) $(MFEM_LIBS)
+
+lh-eld-dpg-fem: $(LH_ELD_DPG_FEM_OBJ)
+	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(LH_ELD_DPG_FEM_OBJ) $(COMMON_LIB) $(MFEM_LIBS)
+
+lh-eld-dpg-debug: $(LH_ELD_DPG_DEBUG_OBJ)
+	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(LH_ELD_DPG_DEBUG_OBJ) $(COMMON_LIB) $(MFEM_LIBS)
+
+lh-eld-weak: $(LH_ELD_WEAK_OBJ)
+	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(LH_ELD_WEAK_OBJ) $(COMMON_LIB) $(MFEM_LIBS)
+
+lh-eld-dpg-fem-weak: $(LH_ELD_DPG_FEM_WEAK_OBJ)
+	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(LH_ELD_DPG_FEM_WEAK_OBJ) $(COMMON_LIB) $(MFEM_LIBS)
 
 # Rule for building lib-common
 lib-common:
