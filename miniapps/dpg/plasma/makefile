@@ -22,61 +22,34 @@ include $(DEFAULTS_MK)
 MFEM_LIB_FILE = mfem_is_not_built
 -include $(CONFIG_MK)
 
-DPG_COMPLEX_SEQ_SRC = ../util/maxwell_utils.cpp ../util/utils.cpp ../util/complexweakform.cpp \
-	../util/complexstaticcond.cpp ../util/pml.cpp ../util/complexblockform.cpp
+DPG_COMPLEX_SEQ_SRC = ../util/utils.cpp ../util/complexweakform.cpp \
+	../util/complexstaticcond.cpp ../util/complexblockform.cpp
 DPG_COMPLEX_PAR_SRC = $(DPG_COMPLEX_SEQ_SRC) ../util/pcomplexweakform.cpp ../util/pcomplexblockform.cpp ../util/blockcomplexhypremat.cpp  
 DPG_COMPLEX_OBJ = $(DPG_COMPLEX_PAR_SRC:.cpp=.o)
 
-PMAXWELL_TOKAMAK_SRC = pmaxwell-tokamak.cpp $(DPG_COMPLEX_PAR_SRC)
-PMAXWELL_TOKAMAK_OBJ = $(PMAXWELL_TOKAMAK_SRC:.cpp=.o)
+LH_UTILS_SRC = utils/lh_utils.cpp ../util/maxwell_utils.cpp
+LH_UTILS_OBJ = $(LH_UTILS_SRC:.cpp=.o)
 
-PMAXWELL_FEM_TOKAMAK_SRC = pmaxwell-fem-tokamak.cpp $(DPG_COMPLEX_PAR_SRC)
-PMAXWELL_FEM_TOKAMAK_OBJ = $(PMAXWELL_FEM_TOKAMAK_SRC:.cpp=.o)
+LH_PRIMAL_SRC = lh-primal-dpg.cpp $(DPG_COMPLEX_PAR_SRC) $(LH_UTILS_SRC)
+LH_PRIMAL_OBJ = $(LH_PRIMAL_SRC:.cpp=.o)
 
-PMAXWELL_PRIMAL_TOKAMAK_SRC = pmaxwell-primal-tokamak.cpp $(DPG_COMPLEX_PAR_SRC)
-PMAXWELL_PRIMAL_TOKAMAK_OBJ = $(PMAXWELL_PRIMAL_TOKAMAK_SRC:.cpp=.o)
-
-PMAXWELL_UW_TOKAMAK_SRC = pmaxwell-uw-tokamak.cpp $(DPG_COMPLEX_PAR_SRC)
-PMAXWELL_UW_TOKAMAK_OBJ = $(PMAXWELL_UW_TOKAMAK_SRC:.cpp=.o)
-
-PMAXWELL_UW_LH_SRC = pmaxwell-uw-lh.cpp $(DPG_COMPLEX_PAR_SRC)
-PMAXWELL_UW_LH_OBJ = $(PMAXWELL_UW_LH_SRC:.cpp=.o)
-
-PMAXWELL_PRIMAL_LH_SRC = pmaxwell-primal-lh.cpp $(DPG_COMPLEX_PAR_SRC)
-PMAXWELL_PRIMAL_LH_OBJ = $(PMAXWELL_PRIMAL_LH_SRC:.cpp=.o)
-
-PMAXWELL_FEM_LH_SRC = pmaxwell-fem-lh.cpp $(DPG_COMPLEX_PAR_SRC)
-PMAXWELL_FEM_LH_OBJ = $(PMAXWELL_FEM_LH_SRC:.cpp=.o)
-
-LH_FEM_SRC = lh-fem.cpp $(DPG_COMPLEX_PAR_SRC)
-LH_FEM_OBJ = $(LH_FEM_SRC:.cpp=.o)
-
-LH_ELD_FEM_SRC = lh-eld-fem.cpp $(DPG_COMPLEX_PAR_SRC)
+LH_ELD_FEM_SRC = lh-eld-fem.cpp $(DPG_COMPLEX_PAR_SRC) $(LH_UTILS_SRC)
 LH_ELD_FEM_OBJ = $(LH_ELD_FEM_SRC:.cpp=.o)
 
-LH_DPG_SRC = lh-dpg.cpp $(DPG_COMPLEX_PAR_SRC)
-LH_DPG_OBJ = $(LH_DPG_SRC:.cpp=.o)
-
-LH_ELD_DPG_SRC = lh-eld-dpg.cpp $(DPG_COMPLEX_PAR_SRC)
+LH_ELD_DPG_SRC = lh-eld-dpg.cpp $(DPG_COMPLEX_PAR_SRC) $(LH_UTILS_SRC)
 LH_ELD_DPG_OBJ = $(LH_ELD_DPG_SRC:.cpp=.o)
 
-LH_ELD_DPG_FEM_SRC = lh-eld-dpg-fem.cpp $(DPG_COMPLEX_PAR_SRC)
+LH_ELD_DPG_FEM_SRC = lh-eld-dpg-fem.cpp $(DPG_COMPLEX_PAR_SRC) $(LH_UTILS_SRC)	
 LH_ELD_DPG_FEM_OBJ = $(LH_ELD_DPG_FEM_SRC:.cpp=.o)
 
-LH_ELD_DPG_DEBUG_SRC = lh-eld-dpg-debug.cpp $(DPG_COMPLEX_PAR_SRC)
-LH_ELD_DPG_DEBUG_OBJ = $(LH_ELD_DPG_DEBUG_SRC:.cpp=.o)
-
-LH_ELD_WEAK_SRC = lh-eld-weak.cpp $(DPG_COMPLEX_PAR_SRC)
+LH_ELD_WEAK_SRC = lh-eld-weak.cpp $(DPG_COMPLEX_PAR_SRC) $(LH_UTILS_SRC)
 LH_ELD_WEAK_OBJ = $(LH_ELD_WEAK_SRC:.cpp=.o)
 
-LH_ELD_DPG_FEM_WEAK_SRC = lh-eld-dpg-fem-weak.cpp $(DPG_COMPLEX_PAR_SRC)
+LH_ELD_DPG_FEM_WEAK_SRC = lh-eld-dpg-fem-weak.cpp $(DPG_COMPLEX_PAR_SRC) $(LH_UTILS_SRC)
 LH_ELD_DPG_FEM_WEAK_OBJ = $(LH_ELD_DPG_FEM_WEAK_SRC:.cpp=.o)
 
 SEQ_MINIAPPS = 
-PAR_MINIAPPS = pmaxwell-tokamak pmaxwell-fem-tokamak \
- pmaxwell-primal-tokamak pmaxwell-uw-tokamak  \
- pmaxwell-uw-lh pmaxwell-fem-lh pmaxwell-primal-lh \
- lh-fem lh-eld-fem lh-dpg lh-eld-dpg lh-eld-dpg-debug \
+PAR_MINIAPPS = lh-primal-dpg lh-eld-fem lh-eld-dpg  \
  lh-eld-dpg-fem lh-eld-weak lh-eld-dpg-fem-weak
 
 ifeq ($(MFEM_USE_MPI),NO)
@@ -106,45 +79,17 @@ COMMON_LIB += $(if $(MFEM_SHARED:YES=),,\
 
 all: $(MINIAPPS)
 
-pmaxwell-tokamak: $(PMAXWELL_TOKAMAK_OBJ)
-	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(PMAXWELL_TOKAMAK_OBJ) $(COMMON_LIB) $(MFEM_LIBS)
-
-pmaxwell-fem-tokamak: $(PMAXWELL_FEM_TOKAMAK_OBJ)
-	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(PMAXWELL_FEM_TOKAMAK_OBJ) $(COMMON_LIB) $(MFEM_LIBS)	
-
-pmaxwell-primal-tokamak: $(PMAXWELL_PRIMAL_TOKAMAK_OBJ)
-	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(PMAXWELL_PRIMAL_TOKAMAK_OBJ) $(COMMON_LIB) $(MFEM_LIBS)	
-
-pmaxwell-uw-tokamak: $(PMAXWELL_UW_TOKAMAK_OBJ)
-	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(PMAXWELL_UW_TOKAMAK_OBJ) $(COMMON_LIB) $(MFEM_LIBS)		
-
-pmaxwell-uw-lh: $(PMAXWELL_UW_LH_OBJ)
-	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(PMAXWELL_UW_LH_OBJ) $(COMMON_LIB) $(MFEM_LIBS)		
-
-pmaxwell-fem-lh: $(PMAXWELL_FEM_LH_OBJ)
-	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(PMAXWELL_FEM_LH_OBJ) $(COMMON_LIB) $(MFEM_LIBS)		
-
-pmaxwell-primal-lh: $(PMAXWELL_PRIMAL_LH_OBJ)
-	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(PMAXWELL_PRIMAL_LH_OBJ) $(COMMON_LIB) $(MFEM_LIBS)
-
-lh-fem: $(LH_FEM_OBJ)
-	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(LH_FEM_OBJ) $(COMMON_LIB) $(MFEM_LIBS)
+lh-primal-dpg: $(LH_PRIMAL_OBJ)
+	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(LH_PRIMAL_OBJ) $(COMMON_LIB) $(MFEM_LIBS)
 
 lh-eld-fem: $(LH_ELD_FEM_OBJ)
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(LH_ELD_FEM_OBJ) $(COMMON_LIB) $(MFEM_LIBS)
-
-lh-dpg: $(LH_DPG_OBJ)
-	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(LH_DPG_OBJ) $(COMMON_LIB) $(MFEM_LIBS)
-
 
 lh-eld-dpg: $(LH_ELD_DPG_OBJ)
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(LH_ELD_DPG_OBJ) $(COMMON_LIB) $(MFEM_LIBS)
 
 lh-eld-dpg-fem: $(LH_ELD_DPG_FEM_OBJ)
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(LH_ELD_DPG_FEM_OBJ) $(COMMON_LIB) $(MFEM_LIBS)
-
-lh-eld-dpg-debug: $(LH_ELD_DPG_DEBUG_OBJ)
-	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(LH_ELD_DPG_DEBUG_OBJ) $(COMMON_LIB) $(MFEM_LIBS)
 
 lh-eld-weak: $(LH_ELD_WEAK_OBJ)
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(LH_ELD_WEAK_OBJ) $(COMMON_LIB) $(MFEM_LIBS)
@@ -167,7 +112,7 @@ clean: clean-build clean-exec
 
 clean-build:
 	rm -f *.o *~ $(PAR_MINIAPPS) $(SEQ_MINIAPPS)
-	rm -f $(DPG_COMPLEX_OBJ)
+	rm -f $(DPG_COMPLEX_OBJ) $(LH_UTILS_OBJ)
 	rm -rf *.dSYM *.TVD.*breakpoints
 
 clean-exec:

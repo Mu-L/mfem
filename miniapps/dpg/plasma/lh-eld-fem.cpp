@@ -21,6 +21,7 @@
 #include "../util/blockcomplexhypremat.hpp"
 #include "../util/utils.hpp"
 #include "../util/maxwell_utils.hpp"
+#include "utils/lh_utils.hpp"
 #include "../../common/mfem-common.hpp"
 #include <fstream>
 #include <iostream>
@@ -30,49 +31,6 @@
 using namespace std;
 using namespace mfem;
 
-
-real_t delta = 0.01; 
-real_t a0 = -1.0;    
-real_t a1 = 5.0;     
-
-real_t pfunc_r(const Vector &x)
-{
-   real_t r = std::sqrt(x(0) * x(0) + x(1) * x(1));
-   return a0 + a1 *(r-0.9);
-}
-
-real_t pfunc_i(const Vector &x)
-{
-   return delta;   
-}
-
-real_t sfunc_r(const Vector &x)
-{
-   return 1.0;
-}
-
-real_t sfunc_i(const Vector &x)
-{
-   return delta;
-}
-
-void bfunc(const Vector &x, Vector &b)
-{
-   real_t r = std::sqrt(x(0) * x(0) + x(1) * x(1));
-   int dim = x.Size();
-   b.SetSize(dim); b = 0.0;
-   b(0) = -x(1) / r;
-   b(1) =  x(0) / r;
-   if (dim == 3) b(2) = 0.0;
-}
-
-void bcrossb(const Vector &x, DenseMatrix &bb)
-{
-   Vector b;
-   bfunc(x, b);
-   bb.SetSize(b.Size());
-   MultVVt(b, bb);
-}
 
 int main(int argc, char *argv[])
 {
@@ -92,10 +50,12 @@ int main(int argc, char *argv[])
    real_t rnum=1.5e9;
    real_t mu = 1.257e-6;
    real_t eps0 = 8.8541878128e-12;
-   bool eld = false; // enable/disable electron Landau damping 
+   bool eld = true; // enable/disable electron Landau damping 
 
    bool paraview = false;
    bool debug = false;
+   bool mumps_solver = true;
+   real_t delta_prec = 0.0;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh",
@@ -112,7 +72,7 @@ int main(int argc, char *argv[])
                   "Permeability of free space (or 1/(spring constant)).");
    args.AddOption(&a0, "-a0", "--a0", "P(r) first parameter.");
    args.AddOption(&a1, "-a1", "--a1", "P(r) second parameter.");
-   args.AddOption(&delta, "-delta", "--delta", "stability parameter.");
+   args.AddOption(&delta_prec, "-dp", "--delta-prec", "stability parameter for the preconditioner.");
    args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                   "--no-visualization",
                   "Enable or disable GLVis visualization.");
@@ -122,7 +82,9 @@ int main(int argc, char *argv[])
    args.AddOption(&paraview, "-paraview", "--paraview", "-no-paraview",
                   "--no-paraview",
                   "Enable or disable ParaView visualization.");
-
+   args.AddOption(&mumps_solver, "-mumps", "--mumps", "-no-mumps",
+                  "--no-mumps",
+                  "Enable or disable MUMPS solver.");
    args.AddOption(&debug, "-debug", "--debug", "-no-debug",
                   "--no-debug",
                   "Enable or disable debug mode (delta = 0.01 and no coupling).");                  
@@ -311,6 +273,31 @@ int main(int argc, char *argv[])
 
    a->Assemble();
 
+   delta = delta_prec;
+   ParComplexBlockForm *a_prec = new ParComplexBlockForm(pfes);
+   // (1/μ₀ ∇×E, ∇ × F)
+   a_prec->AddDomainIntegrator(new CurlCurlIntegrator(muinv), nullptr, 0, 0);
+   // - ω² ϵ₀ (ϵᵣ E, F)
+   a_prec->AddDomainIntegrator(new VectorFEMassIntegrator(m_cf_r),
+                          new VectorFEMassIntegrator(m_cf_i), 0, 0);
+   if (eld)
+   {
+      for (int i = 0; i<ndiffusionequations; i++)
+      {
+         //  i ω²ϵ₀((J₁+J₂),F)
+         // a_prec->AddDomainIntegrator(nullptr, new TransposeIntegrator(new VectorFEMassIntegrator(eps0omeg2)), i+1, 0);
+         //  ( (b⋅∇)J₁ , (b⋅∇) G)
+         a_prec->AddDomainIntegrator(new DirectionalDiffusionIntegrator(scaledb_cf), nullptr, i+1, i+1);
+         // cᵢ (J₁ , G)
+         a_prec->AddDomainIntegrator(new VectorMassIntegrator(*pw_c_coeffs[i]), nullptr, i+1, i+1);
+         // ±cᵢ(P(r) (b ⊗ b) E, G)
+         a_prec->AddDomainIntegrator(new VectorFEMassIntegrator(*signedcPrbb_cf[i]), new VectorFEMassIntegrator(*signedcPibb_cf[i]), 0, i+1);
+      }
+   }
+
+   a_prec->Assemble();
+
+
    for (int i = 0; i<ndiffusionequations; i++)
    {
       delete pw_c_coeffs[i];
@@ -434,52 +421,181 @@ int main(int argc, char *argv[])
 
    Vector b(x.Size()); b = 0.0;
 
-   // a->FormLinearSystem(ess_tdof_list, x, b, Ah, X, B);
-   Array<int> empty;
-   a->FormLinearSystem(empty, x, b, Ah, X, B,1);
-
+   a->FormLinearSystem(ess_tdof_list, x, b, Ah, X, B);
    ComplexOperator * Ahc = Ah.As<ComplexOperator>();
 
-   ParBlockComplexSystem aa(Ahc);
-   Ahc = aa.EliminateBC(ess_tdof_list, X, B);
 
-   BlockOperator * BlockA_r = dynamic_cast<BlockOperator *>(&Ahc->real());
-   BlockOperator * BlockA_i = dynamic_cast<BlockOperator *>(&Ahc->imag());
+   OperatorPtr Ahprec;
+   a_prec->FormSystemMatrix(ess_tdof_list, Ahprec);
+   ComplexOperator * Ahcprec = Ahprec.As<ComplexOperator>();
 
-   int nblocks = BlockA_r->NumRowBlocks();
-   Array2D<const HypreParMatrix*> A_r_matrices(nblocks, nblocks);
-   Array2D<const HypreParMatrix*> A_i_matrices(nblocks, nblocks);
+
+   BlockOperator * BlockPrec_r = dynamic_cast<BlockOperator *>(&Ahcprec->real());
+   BlockOperator * BlockPrec_i = dynamic_cast<BlockOperator *>(&Ahcprec->imag());
+
+   int nblocks = BlockPrec_r->NumRowBlocks();
+   Array2D<const HypreParMatrix*> Prec_r_matrices(nblocks, nblocks);
+   Array2D<const HypreParMatrix*> Prec_i_matrices(nblocks, nblocks);
    for (int i = 0; i < nblocks; i++)
    {
       for (int j = 0; j < nblocks; j++)
       {
-         A_r_matrices(i,j) = dynamic_cast<HypreParMatrix*>(&BlockA_r->GetBlock(i,j));
-         A_i_matrices(i,j) = dynamic_cast<HypreParMatrix*>(&BlockA_i->GetBlock(i,j));
+         Prec_r_matrices(i,j) = dynamic_cast<HypreParMatrix*>(&BlockPrec_r->GetBlock(i,j));
+         Prec_i_matrices(i,j) = dynamic_cast<HypreParMatrix*>(&BlockPrec_i->GetBlock(i,j));
       }
    }
-   HypreParMatrix * Ahr = HypreParMatrixFromBlocks(A_r_matrices);
-   HypreParMatrix * Ahi = HypreParMatrixFromBlocks(A_i_matrices);
+   HypreParMatrix * Prechr = HypreParMatrixFromBlocks(Prec_r_matrices);
+   HypreParMatrix * Prechi = HypreParMatrixFromBlocks(Prec_i_matrices);
 
-   ComplexHypreParMatrix * Ahc_hypre =
-      new ComplexHypreParMatrix(Ahr, Ahi,false, false);
+   ComplexHypreParMatrix * Prechc_hypre =
+      new ComplexHypreParMatrix(Prechr, Prechi,false, false);
 
-   if (Mpi::Root())
-   {
-      mfem::out << "Assembly finished successfully." << endl;
-   }
 
-#ifdef MFEM_USE_MUMPS
-   HypreParMatrix *A = Ahc_hypre->GetSystemMatrix();
-   auto solver = new MUMPSSolver(MPI_COMM_WORLD);
-   solver->SetMatrixSymType(MUMPSSolver::MatType::UNSYMMETRIC);
-   solver->SetPrintLevel(1);
-   solver->SetOperator(*A);
-   solver->Mult(B,X);
-   delete A;
-   delete solver;
-#else
-   MFEM_ABORT("MFEM compiled without mumps");
-#endif
+   HypreParMatrix *Aprec = Prechc_hypre->GetSystemMatrix();
+   auto P = new MUMPSSolver(MPI_COMM_WORLD);
+   P->SetMatrixSymType(MUMPSSolver::MatType::UNSYMMETRIC);
+   P->SetPrintLevel(1);
+   P->SetOperator(*Aprec);
+
+
+   GMRESSolver gmres(MPI_COMM_WORLD);
+   gmres.SetRelTol(1e-10);
+   gmres.SetMaxIter(2000);
+   gmres.SetPrintLevel(1);
+   gmres.SetOperator(*Ahc);
+   gmres.SetPreconditioner(*P);
+   gmres.Mult(B, X);
+
+
+
+
+   // BlockOperator * BlockA_r = dynamic_cast<BlockOperator *>(&Ahc->real());
+   // BlockOperator * BlockA_i = dynamic_cast<BlockOperator *>(&Ahc->imag());
+
+   // int nblocks = BlockA_r->NumRowBlocks();
+   // Array2D<const HypreParMatrix*> A_r_matrices(nblocks, nblocks);
+   // Array2D<const HypreParMatrix*> A_i_matrices(nblocks, nblocks);
+   // for (int i = 0; i < nblocks; i++)
+   // {
+   //    for (int j = 0; j < nblocks; j++)
+   //    {
+   //       A_r_matrices(i,j) = dynamic_cast<HypreParMatrix*>(&BlockA_r->GetBlock(i,j));
+   //       A_i_matrices(i,j) = dynamic_cast<HypreParMatrix*>(&BlockA_i->GetBlock(i,j));
+   //    }
+   // }
+   // HypreParMatrix * Ahr = HypreParMatrixFromBlocks(A_r_matrices);
+   // HypreParMatrix * Ahi = HypreParMatrixFromBlocks(A_i_matrices);
+
+   // ComplexHypreParMatrix * Ahc_hypre =
+   //    new ComplexHypreParMatrix(Ahr, Ahi,false, false);
+
+   // if (Mpi::Root())
+   // {
+   //    mfem::out << "Assembly finished successfully." << endl;
+   // }
+
+// #ifdef MFEM_USE_MUMPS
+//    if (mumps_solver)
+//    {
+//       HypreParMatrix *A = Ahc_hypre->GetSystemMatrix();
+//       auto solver = new MUMPSSolver(MPI_COMM_WORLD);
+//       solver->SetMatrixSymType(MUMPSSolver::MatType::UNSYMMETRIC);
+//       solver->SetPrintLevel(1);
+//       solver->SetOperator(*A);
+//       solver->Mult(B,X);
+//       delete A;
+//       delete solver;
+//    }
+//    else
+//    {
+//       Array<int> tdof_offsets(2*nblocks+1);
+//       tdof_offsets[0] = 0;
+//       for (int i=0; i<nblocks; i++)
+//       {
+//          tdof_offsets[i+1] = A_r_matrices(i,i)->Height();
+//          tdof_offsets[nblocks+i+1] = tdof_offsets[i+1];
+//       }
+//       tdof_offsets.PartialSum();
+
+
+      // BlockOperator blockA(tdof_offsets);
+      // for (int i = 0; i<nblocks; i++)
+      // {
+      //    for (int j = 0; j<nblocks; j++)
+      //    {
+      //       blockA.SetBlock(i,j,&BlockA_r->GetBlock(i,j));
+      //       blockA.SetBlock(i,j+nblocks,&BlockA_i->GetBlock(i,j), -1.0);
+      //       blockA.SetBlock(i+nblocks,j+nblocks,&BlockA_r->GetBlock(i,j));
+      //       blockA.SetBlock(i+nblocks,j,&BlockA_i->GetBlock(i,j));
+      //    }
+      // }
+
+
+      // BlockDiagonalPreconditioner M(tdof_offsets);
+      // BlockLowerTriangularPreconditioner M(tdof_offsets);
+      // M.owns_blocks = 0; // M will delete the blocks
+      // for (int i = 0; i < nblocks; ++i)
+      // {
+      //    auto solver = new MUMPSSolver(MPI_COMM_WORLD);
+      //    solver->SetMatrixSymType(MUMPSSolver::MatType::UNSYMMETRIC);
+      //    solver->SetPrintLevel(1);
+      //    solver->SetOperator((HypreParMatrix &)BlockA_r->GetBlock(i,i));
+      //    M.SetDiagonalBlock(i, solver);
+      //    M.SetDiagonalBlock(i + nblocks, solver);
+      // }
+
+      // ProductOperator C1A_r(&(HypreParMatrix &)BlockA_r->GetBlock(1,0),
+      //                       &M.GetBlock(0,0),false, false);
+      // ProductOperator D1C1A_r(&M.GetBlock(1,1), &C1A_r,false, false); 
+      // ScaledOperator negD1C1A_r(&D1C1A_r, -1.0);  
+      // M.SetBlock(1,0,&negD1C1A_r);                
+      // M.SetBlock(1+nblocks,0,&negD1C1A_r);                
+
+      // ProductOperator C2A_r(&(HypreParMatrix &)BlockA_r->GetBlock(2,0),
+      //                       &M.GetBlock(0,0),false, false);
+      // ProductOperator D2C2A_r(&M.GetBlock(2,2), &C2A_r,false, false); 
+      // ScaledOperator negD2C2A_r(&D2C2A_r, -1.0);  
+      // M.SetBlock(2,0,&negD2C2A_r);                
+      // M.SetBlock(2+nblocks,0,&negD2C2A_r); 
+      // M.SetBlock(3,0,&M.GetBlock(0,0));
+      // M.SetBlock(4,3,&M.GetBlock(1,0));
+      // M.SetBlock(5,3,&M.GetBlock(2,0));
+
+      // ProductOperator C1iA_r(&(HypreParMatrix &)BlockA_i->GetBlock(1,0),
+      //                       &M.GetBlock(0,0),false, false);
+      // ProductOperator D1C1iA_r(&M.GetBlock(1,1), &C1iA_r,false, false); 
+      // ScaledOperator negD1C1iA_r(&D1C1iA_r, -1.0);  
+
+      // ProductOperator C2iA_r(&(HypreParMatrix &)BlockA_i->GetBlock(2,0),
+      //                       &M.GetBlock(0,0),false, false);
+      // ProductOperator D2C2iA_r(&M.GetBlock(2,2), &C2iA_r,false, false); 
+      // ScaledOperator negD2C2iA_r(&D2C2iA_r, -1.0);  
+
+      // M.SetBlock(4,0,&negD1C1iA_r);
+      // M.SetBlock(5,0,&negD2C2iA_r);
+
+      // ProductOperator D1iD1r(&BlockA_i->GetBlock(1,1), &M.GetBlock(1,1), false, false);
+      // ProductOperator D1rD1iD1r(&M.GetBlock(1,1), &D1iD1r, false, false);
+      // ScaledOperator negD1rD1iD1r(&D1rD1iD1r, -1.0);
+      // M.SetBlock(4,1,&negD1rD1iD1r);
+
+
+      // ProductOperator D2iD2r(&BlockA_i->GetBlock(2,2), &M.GetBlock(2,2), false, false);
+      // ProductOperator D2rD2iD2r(&M.GetBlock(2,2), &D2iD2r, false, false);
+      // ScaledOperator negD2rD2iD2r(&D2rD2iD2r, -1.0);
+      // M.SetBlock(5,2,&negD2rD2iD2r);
+
+   //    GMRESSolver gmres(MPI_COMM_WORLD);
+   //    gmres.SetRelTol(1e-10);
+   //    gmres.SetMaxIter(1000);
+   //    gmres.SetPrintLevel(1);
+   //    gmres.SetPreconditioner(M);
+   //    gmres.SetOperator(*Ahc_hypre);
+   //    gmres.Mult(B, X);
+   // }
+// #else
+//    MFEM_ABORT("MFEM compiled without mumps");
+// #endif
 
    a->RecoverFEMSolution(X, x);
 
